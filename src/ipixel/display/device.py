@@ -6,16 +6,28 @@ import sys
 
 import pypixelcolor
 
-from ipixel.constants import BLE_ERRORS, SHEEN_FRAME_MS, SHEEN_FRAMES
+from ipixel.constants import BLE_ERRORS, DEFAULT_BRIGHTNESS, SHEEN_FRAME_MS, SHEEN_FRAMES
 from ipixel.debug import debug
 from ipixel.display.render import render_matrix_gif, render_matrix_png
 
 
-def connect_device(address: str, wipe_slot: int = 0) -> pypixelcolor.Client:
+def clamp_brightness(level: int) -> int:
+    if not 0 <= level <= 100:
+        raise ValueError("La luminosité doit être entre 0 et 100.")
+    return level
+
+
+def connect_device(
+    address: str,
+    wipe_slot: int = 0,
+    brightness: int = DEFAULT_BRIGHTNESS,
+) -> pypixelcolor.Client:
     device = pypixelcolor.Client(address)
     device.connect()
+    level = clamp_brightness(brightness)
     try:
-        device.set_brightness(100)
+        device.set_brightness(level)
+        print(f"Luminosité: {level}%")
     except BLE_ERRORS as exc:
         print(f"Luminosité: {exc}", file=sys.stderr)
     if wipe_slot >= 1:

@@ -13,6 +13,7 @@ from ipixel.constants import (
     BRAND_CAPTION,
     BRAND_CYAN,
     BRAND_WHITE,
+    DEFAULT_BRIGHTNESS,
     SHEEN_FRAME_MS,
     SHEEN_FRAMES,
     SHEEN_HALF_WIDTH,
@@ -203,19 +204,30 @@ def simulate_led_matrix(image: Image.Image, scale: int = 18, gap: int = 3) -> Im
     return canvas
 
 
+def apply_brightness(image: Image.Image, level: int) -> Image.Image:
+    """Scale RGB channels. 100 = unchanged, 0 = black."""
+    amount = max(0, min(100, int(level))) / 100.0
+    if amount >= 1.0:
+        return image
+    table = [int(channel * amount) for channel in range(256)]
+    bands = image.getbands()
+    return image.point(table * len(bands))
+
+
 def write_preview(
     name: str,
     count_text: str,
     font_name: str,
     color: str | None,
     output_dir: str | Path | None = None,
+    brightness: int = DEFAULT_BRIGHTNESS,
 ) -> tuple[str, str, str]:
     folder = preview_dir(output_dir)
     png = render_matrix_png(name, count_text, 32, 32, color, font_name)
     frames, durations = render_matrix_frames(name, count_text, 32, 32, color, font_name)
-    native = Image.open(BytesIO(png)).convert("RGB")
+    native = apply_brightness(Image.open(BytesIO(png)).convert("RGB"), brightness)
     led = simulate_led_matrix(native)
-    led_frames = [simulate_led_matrix(frame) for frame in frames]
+    led_frames = [simulate_led_matrix(apply_brightness(frame.convert("RGB"), brightness)) for frame in frames]
     native_path = folder / "32x32.png"
     led_path = folder / "led.png"
     gif_path = folder / "preview.gif"

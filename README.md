@@ -105,6 +105,7 @@ pytest tests/test_matrix_32.py
 | `--address` | UUID du panneau | Adresse Bluetooth |
 | `--interval` | `15` | Secondes entre deux mises à jour |
 | `--name` | nom YouTube | Texte en haut du panneau |
+| `--brightness` | `100` | Luminosité globale du panneau 0–100 (`IPIXEL_BRIGHTNESS`) |
 | `--color` | cyan RYXACORE | Accent hex, ex. `00d4ff` |
 | `--save-slot` | `0` | Slot 1–10 en ROM ; `0` = affichage live. Ne pas sauver un GIF. |
 | `--wipe-slot` | `1` | Efface ce slot à la connexion (`0` = ne rien effacer). |
@@ -118,7 +119,7 @@ pytest tests/test_matrix_32.py
 | `--preview` | | Simu 32×32 sans Bluetooth, fichiers dans `assets/preview/` |
 | `--preview-dir` | `assets/preview` | Dossier des PNG/GIF générés |
 
-Variables d’environnement équivalentes : `IPIXEL_ADDRESS`, `YOUTUBE_CHANNEL`, `YOUTUBE_CHANNEL_NAME`, `YOUTUBE_API_KEY`, `YOUTUBE_COOKIES`, `YOUTUBE_DEBUG`.
+Variables d’environnement équivalentes : `IPIXEL_ADDRESS`, `IPIXEL_BRIGHTNESS`, `YOUTUBE_CHANNEL`, `YOUTUBE_CHANNEL_NAME`, `YOUTUBE_API_KEY`, `YOUTUBE_COOKIES`, `YOUTUBE_DEBUG`.
 
 ## Compteur exact vs « live »
 

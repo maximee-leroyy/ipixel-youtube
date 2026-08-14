@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pypixelcolor
 
-from ipixel.constants import BLE_ERRORS, COOKIE_HELP
+from ipixel.constants import BLE_ERRORS, COOKIE_HELP, DEFAULT_BRIGHTNESS
 from ipixel.debug import debug, set_debug
-from ipixel.display.device import connect_device, disconnect_device, display_count
+from ipixel.display.device import clamp_brightness, connect_device, disconnect_device, display_count
 from ipixel.display.render import write_preview
 from ipixel.youtube.channel import fetch_channel_name, resolve_channel_id
 from ipixel.youtube.counts import fetch_count, format_count
@@ -68,6 +68,13 @@ def parse_args() -> argparse.Namespace:
         "--color",
         default=None,
         help="Override couleur accent hex. Défaut: palette RYXACORE (bleu/violet/cyan).",
+    )
+    parser.add_argument(
+        "--brightness",
+        type=int,
+        default=int(os.environ.get("IPIXEL_BRIGHTNESS", str(DEFAULT_BRIGHTNESS))),
+        metavar="0-100",
+        help="Luminosité globale du panneau 0-100 (défaut: 100). Ou IPIXEL_BRIGHTNESS.",
     )
     parser.add_argument(
         "--font",
@@ -138,8 +145,14 @@ def main() -> int:
     set_debug(args.debug)
     debug(
         f"start source={args.source} channel={args.channel} cookies={args.cookies} "
-        f"print_count={args.print_count} once={args.once}"
+        f"print_count={args.print_count} once={args.once} brightness={args.brightness}"
     )
+
+    try:
+        brightness = clamp_brightness(args.brightness)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
 
     if args.preview:
         channel_name = args.name or "RYXACORE"
@@ -147,7 +160,12 @@ def main() -> int:
         if preview_count.isdigit():
             preview_count = format_count(int(preview_count))
         native_path, led_path, gif_path = write_preview(
-            channel_name, preview_count, args.font, args.color, args.preview_dir
+            channel_name,
+            preview_count,
+            args.font,
+            args.color,
+            args.preview_dir,
+            brightness,
         )
         print(f"Simu 32x32: {native_path}")
         print(f"Simu LED:   {led_path}")
@@ -218,7 +236,7 @@ def main() -> int:
     min_interval = 15 if args.source == "studio" else 5 if args.source == "live" else 10
 
     try:
-        device = connect_device(args.address, wipe_slot=args.wipe_slot)
+        device = connect_device(args.address, wipe_slot=args.wipe_slot, brightness=brightness)
 
         while True:
             try:
@@ -267,7 +285,7 @@ def main() -> int:
                     except BLE_ERRORS as exc:
                         print(f"Bluetooth perdu ({exc}), reconnexion...", file=sys.stderr)
                         disconnect_device(device)
-                        device = connect_device(args.address, wipe_slot=args.wipe_slot)
+                        device = connect_device(args.address, wipe_slot=args.wipe_slot, brightness=brightness)
                         display_count(
                             device,
                             channel_name,

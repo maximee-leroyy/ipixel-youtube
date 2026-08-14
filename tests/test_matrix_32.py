@@ -4,7 +4,8 @@ from io import BytesIO
 
 from PIL import Image
 
-from ipixel.display.render import render_matrix_gif, render_matrix_png, write_preview
+from ipixel.display.device import clamp_brightness
+from ipixel.display.render import apply_brightness, render_matrix_gif, render_matrix_png, write_preview
 from ipixel.youtube.counts import format_count
 
 
@@ -13,6 +14,35 @@ def test_format_count_groups_thousands() -> None:
     assert format_count(1093) == "1.093"
     assert format_count(1902) == "1.902"
     assert format_count(12345) == "12.345"
+
+
+def test_clamp_brightness() -> None:
+    assert clamp_brightness(0) == 0
+    assert clamp_brightness(40) == 40
+    assert clamp_brightness(100) == 100
+    try:
+        clamp_brightness(101)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("101 should be rejected")
+
+
+def test_apply_brightness_scales_pixels() -> None:
+    png = render_matrix_png("RYXACORE", format_count(1096), 32, 32, None, "CUSONG")
+    full = Image.open(BytesIO(png)).convert("RGB")
+    dim = apply_brightness(full, 50)
+    cyan = (0, 245, 255)
+    found = False
+    for y in range(32):
+        for x in range(32):
+            if full.getpixel((x, y)) == cyan:
+                assert dim.getpixel((x, y)) == (0, 122, 127)
+                found = True
+                break
+        if found:
+            break
+    assert found
 
 
 def test_frame_is_exactly_32x32() -> None:
@@ -120,6 +150,8 @@ def test_idle_gif_has_glass_sheen() -> None:
 
 if __name__ == "__main__":
     test_format_count_groups_thousands()
+    test_clamp_brightness()
+    test_apply_brightness_scales_pixels()
     test_frame_is_exactly_32x32()
     test_frame_is_not_blank()
     test_youtube_logo_has_red_and_play()
