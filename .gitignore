@@ -226,3 +226,5 @@ __pycache__/
 *.pyc
 preview_CUS_*.png
 preview_VCR_*.png
+cookies.txt
+*cookies*.txt

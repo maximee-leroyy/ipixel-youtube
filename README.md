@@ -36,10 +36,20 @@ LED_BLE_XXXXXXXX (00000000-0000-0000-0000-000000000000)
 
 ## Lancer
 
-Par défaut : chaîne `@example` et l’adresse du panneau déjà configurée.
+Le chiffre **exact** (celui de YouTube Studio → *Abonnés actuels*, ex. 1 093) n’est pas public. Il faut la session du propriétaire.
+
+1. Connecte-toi à [YouTube Studio](https://studio.youtube.com) avec le compte de la chaîne
+2. Exporte les cookies (extension Chrome **Get cookies.txt LOCALLY**)
+3. Enregistre le fichier `cookies.txt` à la racine du projet (déjà dans `.gitignore`)
 
 ```bash
 python youtube_subs.py
+```
+
+Vérifier le chiffre sans Bluetooth :
+
+```bash
+python youtube_subs.py --print-count
 ```
 
 Le panneau affiche le nom en blanc, le nombre d’abonnés en cyan, et se met à jour toutes les 15 secondes. Ctrl+C arrête le live ; le dernier écran reste en mémoire (slot 1).
@@ -48,6 +58,12 @@ Autre chaîne ou autre panneau :
 
 ```bash
 python youtube_subs.py --channel @taChaine --address 00000000-0000-0000-0000-000000000000
+```
+
+Estimation publique (arrondie / interpolée, **pas** le 1 093 Studio) :
+
+```bash
+python youtube_subs.py --source live
 ```
 
 ## Simuler sans matériel
@@ -69,18 +85,26 @@ python test_matrix_32.py
 | `--name` | nom YouTube | Texte en haut du panneau |
 | `--color` | cyan RYXACORE | Accent hex, ex. `00d4ff` |
 | `--save-slot` | `1` | Slot 1–10 ; `0` = ne pas sauver |
-| `--source live` | `live` | Estimation type compteurs publics |
+| `--source studio` | `studio` | Chiffre exact YouTube Studio (`--cookies`) |
+| `--cookies` | `cookies.txt` | Session Netscape du propriétaire |
+| `--source live` | | Estimation type compteurs publics |
 | `--source official` | | YouTube Data API (arrondi, `--api-key` requis) |
+| `--print-count` | | Affiche le nombre dans le terminal, sans Bluetooth |
+| `--debug` | | Logs HTTP / session Studio sur stderr |
 | `--preview` | | Simu 32×32 sans Bluetooth |
 
-Variables d’environnement équivalentes : `IPIXEL_ADDRESS`, `YOUTUBE_CHANNEL`, `YOUTUBE_CHANNEL_NAME`, `YOUTUBE_API_KEY`.
+Variables d’environnement équivalentes : `IPIXEL_ADDRESS`, `YOUTUBE_CHANNEL`, `YOUTUBE_CHANNEL_NAME`, `YOUTUBE_API_KEY`, `YOUTUBE_COOKIES`, `YOUTUBE_DEBUG`.
 
-## Compteur « live »
+## Compteur exact vs « live »
 
-L’API officielle YouTube arrondit le nombre d’abonnés au-delà de 1 000. Le mode `--source live` (défaut) utilise les mêmes sources que les compteurs publics (SocialCounts / Mixerno) : c’est une **estimation**, pas le chiffre exact de YouTube Studio.
+L’API officielle YouTube arrondit le nombre d’abonnés au-delà de 1 000 (1 093 → 1 090 / 1 100). Les compteurs publics (SocialCounts / Mixerno) interpolent entre ces paliers : ce n’est **pas** *Abonnés actuels* dans Studio.
+
+`--source studio` (défaut) lit ce chiffre via ta session YouTube Studio. Les cookies expirent de temps en temps : réexporte `cookies.txt` si le script parle de session expirée.
 
 ## Qualité
 
 ```bash
 uvx ruff check . --fix && uvx ty check .
+python test_matrix_32.py
+python test_youtube_count.py
 ```
