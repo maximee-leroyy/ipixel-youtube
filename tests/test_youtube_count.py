@@ -2,20 +2,24 @@
 
 from pathlib import Path
 
-from youtube_subs import (
+from ipixel.youtube.cookies import (
     CookieStore,
-    _is_google_login_url,
-    _redact_url,
-    _SkipGoogleLoginRedirects,
-    extract_lifetime_subscribers,
-    extract_studio_subscriber_count,
-    http_error_detail,
     load_netscape_cookies,
-    looks_publicly_rounded,
     sapisid_from_cookies,
     sapisid_hash,
     studio_headers,
     studio_page_headers,
+)
+from ipixel.youtube.http import (
+    _is_google_login_url,
+    _redact_url,
+    _SkipGoogleLoginRedirects,
+    http_error_detail,
+)
+from ipixel.youtube.studio import (
+    extract_lifetime_subscribers,
+    extract_studio_subscriber_count,
+    looks_publicly_rounded,
     studio_session_ok,
 )
 
@@ -63,6 +67,23 @@ def test_extract_lifetime_subscribers() -> None:
     assert extract_lifetime_subscribers(payload) == 1096
 
 
+def test_extract_lifetime_subscribers_accepts_round_looking_count() -> None:
+    payload = {
+        "cards": [
+            {
+                "latestActivityCardData": {
+                    "lifetimeSubsData": {
+                        "metricColumns": [
+                            {"counts": {"values": [1100]}},
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+    assert extract_lifetime_subscribers(payload) == 1100
+
+
 def test_studio_session_ok() -> None:
     html = '"CHANNEL_ID":"UCxxxxxxxxxxxxxxxxxxxxxx","LOGGED_IN":true,ServiceLogin'
     assert studio_session_ok(html, "https://studio.youtube.com/")
@@ -81,9 +102,7 @@ def test_extract_skips_rounded_when_exact_exists() -> None:
 
 
 def test_google_login_url() -> None:
-    assert _is_google_login_url(
-        "https://accounts.google.com/ServiceLogin?service=youtube&hl=fr"
-    )
+    assert _is_google_login_url("https://accounts.google.com/ServiceLogin?service=youtube&hl=fr")
     assert not _is_google_login_url("https://studio.youtube.com/")
 
 
@@ -137,8 +156,7 @@ def test_cookie_store_writes_set_cookie(tmp_path: Path) -> None:
 
     cookie_file = tmp_path / "cookies.txt"
     cookie_file.write_text(
-        "# Netscape HTTP Cookie File\n"
-        ".youtube.com	TRUE	/	TRUE	0	SAPISID	secret123\n",
+        "# Netscape HTTP Cookie File\n.youtube.com	TRUE	/	TRUE	0	SAPISID	secret123\n",
         encoding="utf-8",
     )
     store = CookieStore(str(cookie_file))
@@ -188,6 +206,7 @@ if __name__ == "__main__":
     test_extract_prefers_owner_metric()
     test_extract_skips_rounded_when_exact_exists()
     test_extract_lifetime_subscribers()
+    test_extract_lifetime_subscribers_accepts_round_looking_count()
     test_studio_session_ok()
     test_google_login_url()
     test_skip_google_login_redirect()

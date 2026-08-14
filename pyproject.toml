@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ipixel-youtube"
+version = "0.1.0"
+description = "Live YouTube subscriber counter for iPixel Color 32×32 LED matrices"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "maxime1907" }]
+dependencies = [
+    "bleak>=0.22",
+    "numpy>=1.26",
+    "pillow>=10",
+    "pymupdf>=1.24",
+    "pypixelcolor>=0.4.0",
+    "pyxelate @ git+https://github.com/sedthh/pyxelate.git",
+]
+
+[project.scripts]
+ipixel-youtube = "ipixel.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/maximee-leroyy/ipixel-youtube"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.9",
+    "ty>=0.0.9",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ipixel"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"assets/youtube.svg" = "ipixel/assets/youtube.svg"
+"assets/youtube.png" = "ipixel/assets/youtube.png"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+src = ["src", "tests"]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ipixel"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]

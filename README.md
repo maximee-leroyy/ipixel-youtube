@@ -4,9 +4,23 @@ Live YouTube subscriber counter for iPixel Color 32×32 LED matrices.
 
 Compteur d’abonnés YouTube en live pour une matrice LED **iPixel Color 32×32**.
 
-Le script récupère le nombre d’abonnés de [RYXACORE](https://www.youtube.com/@example), compose une image 32×32 aux couleurs de la chaîne, et l’envoie au panneau via Bluetooth avec [pypixelcolor](https://lucagoc.fr/pypixelcolor/main/).
+Le script récupère le nombre d’abonnés de [RYXACORE](https://www.youtube.com/@example), pixelise le vrai logo YouTube (SVG) avec [pyxelate](https://github.com/sedthh/pyxelate), compose le 32×32, et l’envoie au panneau via Bluetooth avec [pypixelcolor](https://lucagoc.fr/pypixelcolor/main/).
 
-![Simulation LED 32×32](preview_led.png)
+![Simulation LED 32×32](assets/preview/led.png)
+
+## Architecture
+
+```text
+assets/
+  youtube.svg            # marque officielle Simple Icons
+  youtube.png            # fallback raster
+  preview/               # PNG/GIF générés (--preview)
+src/ipixel/
+  cli.py                 # argparse + boucle live
+  youtube/               # cookies, Studio, APIs publiques
+  display/               # polices bitmap, logo pyxelate, GIF, BLE
+tests/
+```
 
 ## Prérequis
 
@@ -17,9 +31,15 @@ Le script récupère le nombre d’abonnés de [RYXACORE](https://www.youtube.co
 ## Installation
 
 ```bash
+uv sync
+```
+
+Sans uv :
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ## Trouver le panneau
@@ -43,13 +63,15 @@ Le chiffre **exact** (celui de YouTube Studio → *Abonnés actuels*, ex. 1 09
 3. Enregistre le fichier `cookies.txt` à la racine du projet (déjà dans `.gitignore`)
 
 ```bash
-python youtube_subs.py
+ipixel-youtube
+# équivalent :
+python -m ipixel
 ```
 
 Vérifier le chiffre sans Bluetooth :
 
 ```bash
-python youtube_subs.py --print-count
+ipixel-youtube --print-count
 ```
 
 Le panneau affiche le nom, le nombre d’abonnés en cyan, et un **reflet** en boucle (GIF court, sans ROM). Ctrl+C arrête le live. `--static` envoie un PNG fixe. N’utilise `--save-slot 1` qu’avec `--static`, après un affichage correct.
@@ -57,22 +79,22 @@ Le panneau affiche le nom, le nombre d’abonnés en cyan, et un **reflet** en b
 Autre chaîne ou autre panneau :
 
 ```bash
-python youtube_subs.py --channel @taChaine --address 00000000-0000-0000-0000-000000000000
+ipixel-youtube --channel @taChaine --address 00000000-0000-0000-0000-000000000000
 ```
 
 Estimation publique (arrondie / interpolée, **pas** le 1 093 Studio) :
 
 ```bash
-python youtube_subs.py --source live
+ipixel-youtube --source live
 ```
 
 ## Simuler sans matériel
 
-Génère `preview.gif` en grande simu LED (le 32×32 brut est illisible à l’écran) :
+Génère `assets/preview/preview.gif` en grande simu LED (le 32×32 brut est illisible à l’écran) :
 
 ```bash
-python youtube_subs.py --preview
-python test_matrix_32.py
+ipixel-youtube --preview
+pytest tests/test_matrix_32.py
 ```
 
 ## Options utiles
@@ -93,7 +115,8 @@ python test_matrix_32.py
 | `--source official` | | YouTube Data API (arrondi, `--api-key` requis) |
 | `--print-count` | | Affiche le nombre dans le terminal, sans Bluetooth |
 | `--debug` | | Logs HTTP / session Studio sur stderr |
-| `--preview` | | Simu 32×32 sans Bluetooth |
+| `--preview` | | Simu 32×32 sans Bluetooth, fichiers dans `assets/preview/` |
+| `--preview-dir` | `assets/preview` | Dossier des PNG/GIF générés |
 
 Variables d’environnement équivalentes : `IPIXEL_ADDRESS`, `YOUTUBE_CHANNEL`, `YOUTUBE_CHANNEL_NAME`, `YOUTUBE_API_KEY`, `YOUTUBE_COOKIES`, `YOUTUBE_DEBUG`.
 
@@ -106,7 +129,6 @@ L’API officielle YouTube arrondit le nombre d’abonnés au-delà de 1 000 (1�
 ## Qualité
 
 ```bash
-uvx ruff check . --fix && uvx ty check .
-python test_matrix_32.py
-python test_youtube_count.py
+uvx ruff check . --fix && uvx ty check src tests
+uv run pytest
 ```

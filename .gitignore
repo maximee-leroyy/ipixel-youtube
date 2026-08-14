@@ -224,6 +224,9 @@ __marimo__/
 .ruff_cache/
 __pycache__/
 *.pyc
+/preview.gif
+/preview_32x32.png
+/preview_led.png
 preview_CUS_*.png
 preview_VCR_*.png
 cookies.txt
