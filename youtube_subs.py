@@ -21,9 +21,7 @@ from io import BytesIO
 
 import pypixelcolor
 from bleak.exc import BleakError
-from PIL import Image, ImageDraw, ImageFont
-from PIL.ImageFont import FreeTypeFont
-from pypixelcolor.lib.font_config import BUILTIN_FONTS
+from PIL import Image, ImageDraw
 
 BLE_ERRORS = (BleakError, OSError, RuntimeError, TimeoutError, ConnectionError)
 
@@ -121,6 +119,11 @@ def parse_args() -> argparse.Namespace:
         "--preview-count",
         default="1080",
         help="Nombre affiché en mode --preview (défaut: 1080).",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Affiche une seule fois puis quitte (le texte reste si --save-slot >= 1).",
     )
     return parser.parse_args()
 
@@ -285,7 +288,7 @@ def format_count(count: int) -> str:
 
 # Police bitmap 5x7, trait de 1 px : lisible sur LED, trous ouverts (0 ≠ 8, A ≠ R).
 FONT_5X7: dict[str, tuple[str, ...]] = {
-    "0": (" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### "),
+    "0": (" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "),
     "1": ("  #  ", " ##  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "),
     "2": (" ### ", "#   #", "    #", "  ## ", " #   ", "#    ", "#####"),
     "3": (" ### ", "#   #", "    #", "  ## ", "    #", "#   #", " ### "),
@@ -327,59 +330,70 @@ FONT_5X7: dict[str, tuple[str, ...]] = {
 
 
 def _name_lines(name: str) -> list[str]:
-    compact = name.replace(" ", "")
+    compact = name.replace(" ", "").upper()
     if len(compact) <= 5:
         return [compact]
     mid = (len(compact) + 1) // 2
     return [compact[:mid], compact[mid:]]
 
 
-def _stamp_text(
+def _parse_hex_color(color: str) -> PixelColor:
+    color_bytes = bytes.fromhex(color)
+    if len(color_bytes) != 3:
+        raise ValueError("Color must be 3 bytes (6 hex chars), e.g. '00d4ff'")
+    return (color_bytes[0], color_bytes[1], color_bytes[2])
+
+
+def _glyph(char: str) -> tuple[str, ...]:
+    return FONT_5X7.get(char.upper(), FONT_5X7["?"])
+
+
+def _text_pixel_size(text: str, gap: int = 1) -> tuple[int, int]:
+    if not text:
+        return 0, 0
+    glyphs = [_glyph(char) for char in text]
+    width = sum(len(glyph[0]) for glyph in glyphs) + gap * (len(glyphs) - 1)
+    height = len(glyphs[0])
+    return width, height
+
+
+def _blit_glyph(
+    image: Image.Image,
+    glyph: tuple[str, ...],
+    origin_x: int,
+    origin_y: int,
+    color: PixelColor,
+) -> None:
+    pixels = image.load()
+    if pixels is None:
+        return
+    width, height = image.size
+    for row, line in enumerate(glyph):
+        for col, cell in enumerate(line):
+            if cell == " ":
+                continue
+            x = origin_x + col
+            y = origin_y + row
+            if 0 <= x < width and 0 <= y < height:
+                pixels[x, y] = color
+
+
+def _blit_text(
     image: Image.Image,
     text: str,
-    font_path: str,
-    band_top: int,
-    band_height: int,
+    top: int,
     color: PixelColor,
-    threshold: int = 90,
+    gap: int = 2,
 ) -> None:
-    width, height = image.size
-    mask = Image.new("L", (width, height), 0)
-    draw = ImageDraw.Draw(mask)
-    max_size = max(band_height * 3 // 4, 5)
-    gap = 1
-    extra_gaps = gap * max(len(text) - 1, 0)
-    font, _bbox, _text_w, text_h = _fit_font(
-        draw, text, font_path, max_size, width - 4 - extra_gaps, max_size
-    )
-    char_metrics: list[tuple[str, tuple[int, int, int, int], int]] = []
-    total_w = 0
-    for index, char in enumerate(text):
-        bbox, char_w, _char_h = _text_metrics(draw, char, font)
-        char_metrics.append((char, bbox, char_w))
-        total_w += char_w
-        if index < len(text) - 1:
-            total_w += gap
-
-    cursor = (width - total_w) // 2
-    y = band_top + (band_height - text_h) // 2
-    for char, bbox, char_w in char_metrics:
-        draw.text((cursor - bbox[0], y - bbox[1]), char, font=font, fill=255)
-        cursor += char_w + gap
-
-    pixels = image.load()
-    mask_pixels = mask.load()
-    if pixels is None or mask_pixels is None:
-        return
-    y_end = min(band_top + band_height, height)
-    for py in range(max(band_top, 0), y_end):
-        for px in range(width):
-            value = mask_pixels[px, py]
-            if isinstance(value, int) and value >= threshold:
-                pixels[px, py] = color
+    glyphs = [_glyph(char) for char in text]
+    total_w, _total_h = _text_pixel_size(text, gap)
+    cursor = (image.width - total_w) // 2
+    for glyph in glyphs:
+        _blit_glyph(image, glyph, cursor, top, color)
+        cursor += len(glyph[0]) + gap
 
 
-def _draw_corners(image: Image.Image, color: PixelColor, size: int = 3) -> None:
+def _draw_corners(image: Image.Image, color: PixelColor, size: int = 2) -> None:
     width, height = image.size
     pixels = image.load()
     if pixels is None:
@@ -397,19 +411,17 @@ def _draw_corners(image: Image.Image, color: PixelColor, size: int = 3) -> None:
 
 def _draw_circuit_line(image: Image.Image, y: int, color: PixelColor) -> None:
     width, height = image.size
-    if y <= 0 or y >= height - 1:
+    if y <= 0 or y >= height:
         return
     pixels = image.load()
     if pixels is None:
         return
-    left = 4
-    right = width - 5
-    for x in range(left + 1, right):
+    left = 6
+    right = width - 7
+    for x in range(left, right + 1):
         pixels[x, y] = color
-    for node_x in (left, right):
-        pixels[node_x, y] = color
-        pixels[node_x, y - 1] = color
-        pixels[node_x, y + 1] = color
+    pixels[left, y] = color
+    pixels[right, y] = color
 
 
 def render_matrix_png(
@@ -420,34 +432,19 @@ def render_matrix_png(
     color: str | None,
     font_name: str,
 ) -> bytes:
+    del font_name
     accent = _parse_hex_color(color) if color else BRAND_CYAN
     image = Image.new("RGB", (width, height), BRAND_BG)
-    font_path = _font_path(font_name)
     name_lines = _name_lines(name)
-    separator = 2
-    count_band = max(13, height * 12 // 32)
-    name_area = height - count_band - separator
-    line_height = name_area // max(len(name_lines), 1)
-
+    glyph_h = 7
+    name_top = 2
+    line_gap = 3
     for index, line in enumerate(name_lines):
-        _stamp_text(
-            image,
-            line,
-            font_path,
-            index * line_height,
-            line_height,
-            BRAND_WHITE,
-        )
-
-    _draw_circuit_line(image, name_area, accent)
-    _stamp_text(
-        image,
-        count_text,
-        font_path,
-        name_area + separator,
-        count_band,
-        accent,
-    )
+        _blit_text(image, line, name_top + index * (glyph_h + line_gap), BRAND_WHITE)
+    separator_y = name_top + len(name_lines) * glyph_h + (len(name_lines) - 1) * line_gap + 2
+    _draw_circuit_line(image, separator_y, accent)
+    count_top = separator_y + 3
+    _blit_text(image, count_text, count_top, accent)
     _draw_corners(image, accent)
 
     buffer = BytesIO()
