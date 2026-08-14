@@ -89,7 +89,12 @@ BRAND_BG = (0, 0, 0)
 BRAND_WHITE = (255, 255, 255)
 BRAND_CYAN = (0, 245, 255)
 BRAND_YT_RED = (255, 0, 0)
+BRAND_CAPTION = (200, 200, 208)
 PixelColor = tuple[int, int, int]
+# Delay GIF en 1/100 s. En dessous de 10 (100 ms) beaucoup de firmware clampent à 5 fps.
+SHEEN_FRAME_MS = 100
+SHEEN_FRAMES = 24
+SHEEN_HALF_WIDTH = 3
 DEBUG = False
 
 
@@ -166,13 +171,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--save-slot",
         type=int,
+        default=0,
+        help="Slot 1-10 pour sauver en ROM. Défaut: 0 (affichage live, pas de ROM). "
+        "La doc pypixelcolor: un slot avec data corrompue peut brick/bootloop. "
+        "N'utilise un slot qu'après un envoi OK sans slot.",
+    )
+    parser.add_argument(
+        "--wipe-slot",
+        type=int,
         default=1,
-        help="Slot 1-10 pour garder l'affichage après déconnexion (défaut: 1). 0 = ne pas sauver.",
+        metavar="N",
+        help="Efface ce slot à la connexion (défaut: 1, là où le GIF cassé a été sauvé). "
+        "0 = ne rien effacer.",
+    )
+    parser.add_argument(
+        "--static",
+        action="store_true",
+        help="PNG fixe, sans animation. Défaut: GIF court (reflet) en live, sans slot ROM.",
     )
     parser.add_argument(
         "--preview",
         action="store_true",
-        help="Génère une simu 32x32 (preview_32x32.png + preview_led.png) sans Bluetooth.",
+        help="Génère une simu LED animée (preview.gif, grande taille) sans Bluetooth.",
     )
     parser.add_argument(
         "--preview-count",
@@ -1272,15 +1292,24 @@ FONT_5X7: dict[str, tuple[str, ...]] = {
     "?": (" ### ", "#   #", "    #", "  ## ", "  #  ", "     ", "  #  "),
 }
 
-# Play YouTube 11x7 : pill 2017+, coins 2 px, triangle optiquement centré.
-YOUTUBE_PLAY: tuple[str, ...] = (
-    "  #######  ",
-    " ######### ",
-    "###WW######",
-    "###WWW#####",
-    "###WW######",
-    " ######### ",
-    "  #######  ",
+# Play YouTube 12x7 : largeur paire (centré sur 32), triangle au milieu du pill.
+YOUTUBE_BODY: tuple[str, ...] = (
+    "  ########  ",
+    " ########## ",
+    "############",
+    "############",
+    "############",
+    " ########## ",
+    "  ########  ",
+)
+YOUTUBE_TRIANGLE: tuple[str, ...] = (
+    "            ",
+    "            ",
+    "     WW     ",
+    "     WWW    ",
+    "     WW     ",
+    "            ",
+    "            ",
 )
 
 # Label 4x5 : caption moderne, le 5x7 reste pour le chiffre.
@@ -1391,34 +1420,64 @@ def _blit_text(
         cursor += len(glyph[0]) + gap
 
 
-def _blit_youtube_play(image: Image.Image, origin_x: int, origin_y: int) -> None:
+def _draw_corners(image: Image.Image, color: PixelColor, size: int = 3) -> None:
+    width, height = image.size
+    pixels = image.load()
+    if pixels is None:
+        return
+    for i in range(size):
+        pixels[i, 0] = color
+        pixels[0, i] = color
+        pixels[width - 1 - i, 0] = color
+        pixels[width - 1, i] = color
+        pixels[i, height - 1] = color
+        pixels[0, height - 1 - i] = color
+        pixels[width - 1 - i, height - 1] = color
+        pixels[width - 1, height - 1 - i] = color
+
+
+def _blit_youtube_play(
+    image: Image.Image,
+    origin_x: int,
+    origin_y: int,
+) -> None:
     pixels = image.load()
     if pixels is None:
         return
     width, height = image.size
-    for row, line in enumerate(YOUTUBE_PLAY):
+    red: set[tuple[int, int]] = set()
+    for row, line in enumerate(YOUTUBE_BODY):
         for col, cell in enumerate(line):
             if cell == " ":
                 continue
             x = origin_x + col
             y = origin_y + row
             if 0 <= x < width and 0 <= y < height:
-                pixels[x, y] = BRAND_WHITE if cell == "W" else BRAND_YT_RED
+                pixels[x, y] = BRAND_YT_RED
+                red.add((x, y))
+    for row, line in enumerate(YOUTUBE_TRIANGLE):
+        for col, cell in enumerate(line):
+            if cell == " ":
+                continue
+            x = origin_x + col
+            y = origin_y + row
+            if (x, y) in red:
+                pixels[x, y] = BRAND_WHITE
 
 
-def render_matrix_png(
+def render_matrix_image(
     name: str,
     count_text: str,
     width: int,
     height: int,
     color: str | None,
     font_name: str,
-) -> bytes:
+) -> Image.Image:
     del font_name
     accent = _parse_hex_color(color) if color else BRAND_CYAN
     image = Image.new("RGB", (width, height), BRAND_BG)
-    logo_w = len(YOUTUBE_PLAY[0])
-    logo_h = len(YOUTUBE_PLAY)
+    logo_w = len(YOUTUBE_BODY[0])
+    logo_h = len(YOUTUBE_BODY)
     count_gap = 2 if _text_pixel_size(count_text, 2)[0] <= width - 4 else 1
     _, count_h = _text_pixel_size(count_text, count_gap)
     name_lines = _name_lines(name)
@@ -1426,7 +1485,6 @@ def render_matrix_png(
     label_gap_y = 1
     label_block = len(name_lines) * label_h + max(0, len(name_lines) - 1) * label_gap_y
 
-    # Widget Pixoo / LaMetric : icône collée au chiffre, caption un cran plus bas.
     gap_a = 2
     gap_b = 3
     block_h = logo_h + gap_a + count_h + gap_b + label_block
@@ -1442,14 +1500,120 @@ def render_matrix_png(
             image,
             line,
             label_y + index * (label_h + label_gap_y),
-            BRAND_WHITE,
+            BRAND_CAPTION,
             gap=1,
             font=FONT_4X5,
         )
+    _draw_corners(image, accent)
+    return image
 
+
+def _mix_rgb(color: PixelColor, other: PixelColor, amount: float) -> PixelColor:
+    amount = min(1.0, max(0.0, amount))
+    return (
+        int(color[0] + (other[0] - color[0]) * amount),
+        int(color[1] + (other[1] - color[1]) * amount),
+        int(color[2] + (other[2] - color[2]) * amount),
+    )
+
+
+def _apply_glass_sheen(image: Image.Image, front: int, half_width: int = SHEEN_HALF_WIDTH) -> Image.Image:
+    """Diagonal specular highlight across lit pixels only."""
+    glazed = image.copy()
+    pixels = glazed.load()
+    if pixels is None:
+        return glazed
+    width, height = glazed.size
+    for y in range(height):
+        for x in range(width):
+            pixel = pixels[x, y]
+            if not isinstance(pixel, tuple):
+                continue
+            rgb = (int(pixel[0]), int(pixel[1]), int(pixel[2]))
+            if rgb[0] + rgb[1] + rgb[2] < 28:
+                continue
+            dist = abs(x + y - front)
+            if dist > half_width:
+                continue
+            amount = 1.0 * (1.0 - dist / (half_width + 1))
+            pixels[x, y] = _mix_rgb(rgb, BRAND_WHITE, amount)
+    return glazed
+
+
+def _save_gif(frames: list[Image.Image], durations: list[int]) -> bytes:
+    rgb_frames = [frame.convert("RGB") for frame in frames]
+    width, height = rgb_frames[0].size
+    sheet = Image.new("RGB", (width * len(rgb_frames), height))
+    for index, frame in enumerate(rgb_frames):
+        sheet.paste(frame, (index * width, 0))
+    palette = sheet.quantize(
+        colors=32,
+        method=Image.Quantize.MEDIANCUT,
+        dither=Image.Dither.NONE,
+    )
+    paletted = [
+        frame.quantize(palette=palette, dither=Image.Dither.NONE) for frame in rgb_frames
+    ]
+    buffer = BytesIO()
+    paletted[0].save(
+        buffer,
+        format="GIF",
+        save_all=True,
+        append_images=paletted[1:],
+        duration=durations,
+        loop=0,
+        disposal=1,
+        optimize=False,
+    )
+    return buffer.getvalue()
+
+
+def render_matrix_frames(
+    name: str,
+    count_text: str,
+    width: int,
+    height: int,
+    color: str | None,
+    font_name: str,
+) -> tuple[list[Image.Image], list[int]]:
+    base = render_matrix_image(name, count_text, width, height, color, font_name)
+    frames: list[Image.Image] = []
+    durations: list[int] = []
+    first_front = -SHEEN_HALF_WIDTH
+    last_front = width + height + SHEEN_HALF_WIDTH
+    span = last_front - first_front
+    for index in range(SHEEN_FRAMES):
+        front = first_front + int(span * index / max(SHEEN_FRAMES - 1, 1))
+        frames.append(_apply_glass_sheen(base, front))
+        durations.append(SHEEN_FRAME_MS)
+    return frames, durations
+
+
+def render_matrix_png(
+    name: str,
+    count_text: str,
+    width: int,
+    height: int,
+    color: str | None,
+    font_name: str,
+) -> bytes:
+    image = render_matrix_image(name, count_text, width, height, color, font_name)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def render_matrix_gif(
+    name: str,
+    count_text: str,
+    width: int,
+    height: int,
+    color: str | None,
+    font_name: str,
+) -> bytes:
+    """Idle loop: a glass sheen sweeps the widget, then rests."""
+    frames, durations = render_matrix_frames(name, count_text, width, height, color, font_name)
+    return _save_gif(frames, durations)
 
 
 def simulate_led_matrix(image: Image.Image, scale: int = 18, gap: int = 3) -> Image.Image:
@@ -1480,24 +1644,34 @@ def write_preview(
     font_name: str,
     color: str | None,
     output_dir: str = ".",
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     png = render_matrix_png(name, count_text, 32, 32, color, font_name)
+    frames, durations = render_matrix_frames(name, count_text, 32, 32, color, font_name)
     native = Image.open(BytesIO(png)).convert("RGB")
     led = simulate_led_matrix(native)
+    led_frames = [simulate_led_matrix(frame) for frame in frames]
     native_path = f"{output_dir}/preview_32x32.png"
     led_path = f"{output_dir}/preview_led.png"
+    gif_path = f"{output_dir}/preview.gif"
     native.save(native_path)
     led.save(led_path)
-    return native_path, led_path
+    Path(gif_path).write_bytes(_save_gif(led_frames, durations))
+    return native_path, led_path, gif_path
 
 
-def connect_device(address: str) -> pypixelcolor.Client:
+def connect_device(address: str, wipe_slot: int = 0) -> pypixelcolor.Client:
     device = pypixelcolor.Client(address)
     device.connect()
     try:
         device.set_brightness(100)
     except BLE_ERRORS as exc:
         print(f"Luminosité: {exc}", file=sys.stderr)
+    if wipe_slot >= 1:
+        try:
+            device.delete(wipe_slot)
+            print(f"Slot {wipe_slot} effacé.")
+        except BLE_ERRORS as exc:
+            print(f"Slot {wipe_slot}: {exc}", file=sys.stderr)
     info = device.get_device_info()
     print(f"Connecté au panneau {info.width}x{info.height}")
     return device
@@ -1518,8 +1692,28 @@ def display_count(
     color: str | None,
     font: str,
     save_slot: int,
+    animate: bool,
 ) -> None:
     info = device.get_device_info()
+    if animate:
+        if save_slot >= 1:
+            print("GIF: --save-slot ignoré (un GIF en ROM peut brick le panneau).")
+            save_slot = 0
+        gif = render_matrix_gif(
+            name,
+            count_text,
+            info.width,
+            info.height,
+            color,
+            font,
+        )
+        device.send_image_hex(gif.hex(), ".gif", resize_method="crop", save_slot=0)
+        print(f"GIF {SHEEN_FRAMES} frames × {SHEEN_FRAME_MS} ms ({len(gif)} octets).")
+        debug(
+            f"BLE send_gif {info.width}x{info.height} "
+            f"bytes={len(gif)} text={count_text}"
+        )
+        return
     png = render_matrix_png(
         name,
         count_text,
@@ -1528,8 +1722,8 @@ def display_count(
         color,
         font,
     )
-    device.send_image_hex(png.hex(), ".png", resize_method="fit", save_slot=save_slot)
-    debug(f"BLE send_image {info.width}x{info.height} slot={save_slot} text={count_text}")
+    device.send_image_hex(png.hex(), ".png", resize_method="crop", save_slot=save_slot)
+    debug(f"BLE send_png {info.width}x{info.height} slot={save_slot} text={count_text}")
     if save_slot >= 1:
         device.show_slot(save_slot)
 
@@ -1544,11 +1738,12 @@ def main() -> int:
 
     if args.preview:
         channel_name = args.name or "RYXACORE"
-        native_path, led_path = write_preview(
+        native_path, led_path, gif_path = write_preview(
             channel_name, args.preview_count, args.font, args.color
         )
         print(f"Simu 32x32: {native_path}")
         print(f"Simu LED:   {led_path}")
+        print(f"Ouvre le GIF: {gif_path}")
         return 0
 
     missing = []
@@ -1616,7 +1811,7 @@ def main() -> int:
     min_interval = 15 if args.source == "studio" else 5 if args.source == "live" else 10
 
     try:
-        device = connect_device(args.address)
+        device = connect_device(args.address, wipe_slot=args.wipe_slot)
 
         while True:
             try:
@@ -1650,11 +1845,12 @@ def main() -> int:
                             color=args.color,
                             font=args.font,
                             save_slot=args.save_slot,
+                            animate=not args.static,
                         )
                     except BLE_ERRORS as exc:
                         print(f"Bluetooth perdu ({exc}), reconnexion...", file=sys.stderr)
                         disconnect_device(device)
-                        device = connect_device(args.address)
+                        device = connect_device(args.address, wipe_slot=args.wipe_slot)
                         display_count(
                             device,
                             channel_name,
@@ -1662,6 +1858,7 @@ def main() -> int:
                             color=args.color,
                             font=args.font,
                             save_slot=args.save_slot,
+                            animate=not args.static,
                         )
                     last_count = count
                 else:

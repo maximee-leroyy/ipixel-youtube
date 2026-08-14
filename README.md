@@ -52,7 +52,7 @@ Vérifier le chiffre sans Bluetooth :
 python youtube_subs.py --print-count
 ```
 
-Le panneau affiche le nom en blanc, le nombre d’abonnés en cyan, et se met à jour toutes les 15 secondes. Ctrl+C arrête le live ; le dernier écran reste en mémoire (slot 1).
+Le panneau affiche le nom, le nombre d’abonnés en cyan, et un **reflet** en boucle (GIF court, sans ROM). Ctrl+C arrête le live. `--static` envoie un PNG fixe. N’utilise `--save-slot 1` qu’avec `--static`, après un affichage correct.
 
 Autre chaîne ou autre panneau :
 
@@ -68,7 +68,7 @@ python youtube_subs.py --source live
 
 ## Simuler sans matériel
 
-Génère `preview_32x32.png` (pixels bruts) et `preview_led.png` (rendu type panneau) :
+Génère `preview.gif` en grande simu LED (le 32×32 brut est illisible à l’écran) :
 
 ```bash
 python youtube_subs.py --preview
@@ -84,7 +84,9 @@ python test_matrix_32.py
 | `--interval` | `15` | Secondes entre deux mises à jour |
 | `--name` | nom YouTube | Texte en haut du panneau |
 | `--color` | cyan RYXACORE | Accent hex, ex. `00d4ff` |
-| `--save-slot` | `1` | Slot 1–10 ; `0` = ne pas sauver |
+| `--save-slot` | `0` | Slot 1–10 en ROM ; `0` = affichage live. Ne pas sauver un GIF. |
+| `--wipe-slot` | `1` | Efface ce slot à la connexion (`0` = ne rien effacer). |
+| `--static` | | PNG fixe, sans animation. |
 | `--source studio` | `studio` | Chiffre exact YouTube Studio (`--cookies`) |
 | `--cookies` | `cookies.txt` | Session Netscape du propriétaire |
 | `--source live` | | Estimation type compteurs publics |
