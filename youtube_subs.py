@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.cookiejar
 import json
 import os
 import re
@@ -18,9 +19,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
-from http.client import HTTPResponse
+from dataclasses import dataclass
+from http.client import HTTPMessage, HTTPResponse
 from io import BytesIO
 from pathlib import Path
+from typing import IO, cast
 
 import pypixelcolor
 from bleak.exc import BleakError
@@ -52,6 +55,8 @@ INNERTUBE_CONTEXT = {
     }
 }
 STUDIO_COOKIE_NAMES = ("SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID")
+STUDIO_SESSION_TTL_S = 8 * 60
+WEB_CREATOR_CLIENT_NAME = "62"
 STUDIO_SUBSCRIBER_KEYS = {
     "subscriberCount",
     "totalSubscriberCount",
@@ -67,6 +72,9 @@ Il faut la session du propriétaire de la chaîne.
 3. Enregistre le fichier cookies.txt à la racine du projet
 4. Relance : python youtube_subs.py --cookies cookies.txt
 
+Le script réécrit ce fichier quand Google envoie de nouveaux cookies.
+Réexporte seulement après un logout, ou si le script dit que la session a expiré.
+
 Sans cookies, tu peux encore afficher l'estimation publique :
   python youtube_subs.py --source live
 """
@@ -80,6 +88,7 @@ CHANNEL_ID_RE = re.compile(r"UC[\w-]{22}")
 BRAND_BG = (0, 0, 0)
 BRAND_WHITE = (255, 255, 255)
 BRAND_CYAN = (0, 245, 255)
+BRAND_YT_RED = (255, 0, 0)
 PixelColor = tuple[int, int, int]
 DEBUG = False
 
@@ -209,22 +218,102 @@ def _redact_url(url: str) -> str:
     )
 
 
-def _http_open(request: urllib.request.Request, timeout: int) -> HTTPResponse:
+def http_error_detail(exc: urllib.error.HTTPError) -> str:
+    url = _redact_url(exc.url) if exc.url else ""
+    try:
+        body = exc.read().decode(errors="replace")[:300].strip()
+    except OSError:
+        body = ""
+    reason = str(exc.reason or "").strip()
+    bits = [str(exc.code)]
+    if reason:
+        bits.append(reason)
+    if url:
+        bits.append(url)
+    detail = " ".join(bits)
+    return f"{detail}: {body}" if body else detail
+
+
+def _is_google_login_url(url: str | None) -> bool:
+    if not url:
+        return False
+    host = urllib.parse.urlsplit(url).netloc.lower()
+    return host == "accounts.google.com" or host.endswith(".accounts.google.com")
+
+
+def _http_error_is_login(exc: urllib.error.HTTPError) -> bool:
+    if _is_google_login_url(exc.url):
+        return True
+    location = exc.headers.get("Location") if exc.headers is not None else None
+    return _is_google_login_url(location)
+
+
+class _SkipGoogleLoginRedirects(urllib.request.HTTPRedirectHandler):
+    """Do not follow Studio → accounts.google.com; urllib would 400 the login page."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        if _is_google_login_url(newurl):
+            debug(f"studio stop redirect {_redact_url(newurl)}")
+            return None
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is None:
+            return None
+        old_host = urllib.parse.urlsplit(req.full_url).netloc
+        new_host = urllib.parse.urlsplit(newurl).netloc
+        if old_host != new_host:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+_STUDIO_HTML_OPENER: urllib.request.OpenerDirector | None = None
+
+
+def _studio_html_opener() -> urllib.request.OpenerDirector:
+    global _STUDIO_HTML_OPENER
+    if _STUDIO_HTML_OPENER is None:
+        _STUDIO_HTML_OPENER = urllib.request.build_opener(_SkipGoogleLoginRedirects)
+    return _STUDIO_HTML_OPENER
+
+
+def _http_open(
+    request: urllib.request.Request,
+    timeout: int,
+    opener: urllib.request.OpenerDirector | None = None,
+    cookie_store: CookieStore | None = None,
+) -> HTTPResponse:
     debug(f"{request.get_method()} {_redact_url(request.full_url)}")
     try:
-        return urllib.request.urlopen(request, timeout=timeout)
+        if opener is None:
+            response = urllib.request.urlopen(request, timeout=timeout)
+        else:
+            response = opener.open(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
         debug(f"HTTP {exc.code} {_redact_url(exc.url or request.full_url)}")
+        if cookie_store is not None:
+            cookie_store.absorb(request, exc)
         raise
+    if cookie_store is not None:
+        cookie_store.absorb(request, response)
+    return response
 
 
 def http_get_text(
     url: str,
     timeout: int = 20,
     headers: dict[str, str] | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
+    cookie_store: CookieStore | None = None,
 ) -> tuple[str, str]:
     request = urllib.request.Request(url, headers=_merge_headers(headers))
-    with _http_open(request, timeout) as response:
+    with _http_open(request, timeout, opener, cookie_store) as response:
         body = response.read().decode("utf-8", errors="replace")
         final_url = response.url
         debug(f"GET <- {response.status} {final_url} ({len(body)} bytes)")
@@ -235,9 +324,10 @@ def http_get_json(
     url: str,
     timeout: int = 15,
     headers: dict[str, str] | None = None,
+    cookie_store: CookieStore | None = None,
 ) -> dict:
     request = urllib.request.Request(url, headers=_merge_headers(headers))
-    with _http_open(request, timeout) as response:
+    with _http_open(request, timeout, cookie_store=cookie_store) as response:
         raw = response.read().decode()
         debug(f"GET <- {response.status} {_redact_url(response.url)} ({len(raw)} bytes)")
         return json.loads(raw)
@@ -248,6 +338,7 @@ def http_post_json(
     payload: Mapping[str, object],
     timeout: int = 20,
     headers: dict[str, str] | None = None,
+    cookie_store: CookieStore | None = None,
 ) -> dict:
     request_headers = _merge_headers(headers)
     request_headers.setdefault("Content-Type", "application/json")
@@ -256,7 +347,7 @@ def http_post_json(
         data=json.dumps(payload).encode(),
         headers=request_headers,
     )
-    with _http_open(request, timeout) as response:
+    with _http_open(request, timeout, cookie_store=cookie_store) as response:
         raw = response.read().decode()
         parsed = json.loads(raw)
         keys = list(parsed)[:8] if isinstance(parsed, dict) else type(parsed).__name__
@@ -419,32 +510,196 @@ def fetch_official_count(api_key: str, channel: str) -> int:
     return official
 
 
-def load_netscape_cookies(path: str) -> dict[str, str]:
-    cookies: dict[str, str] = {}
+def _cookie_host_ok(domain: str) -> bool:
+    host = domain.lstrip(".").lower()
+    return host.endswith(("youtube.com", "google.com"))
+
+
+class _StudioCookiePolicy(http.cookiejar.DefaultCookiePolicy):
+    """Allow Google/YouTube Set-Cookie even when the request host is studio.youtube.com."""
+
+    def set_ok_domain(self, cookie: http.cookiejar.Cookie, request: object) -> bool:
+        del request
+        return _cookie_host_ok(cookie.domain)
+
+
+def _netscape_cookie(
+    domain: str,
+    path: str,
+    secure: str,
+    exp: str,
+    name: str,
+    value: str,
+    httponly: bool,
+) -> http.cookiejar.Cookie:
+    initial_dot = domain.startswith(".")
+    try:
+        expires = int(exp) if exp else None
+    except ValueError:
+        expires = None
+    discard = expires is None or expires == 0
+    if expires == 0:
+        expires = None
+    return http.cookiejar.Cookie(
+        0,
+        name,
+        value,
+        None,
+        False,
+        domain,
+        initial_dot,
+        initial_dot,
+        path or "/",
+        True,
+        secure.upper() == "TRUE",
+        expires,
+        discard,
+        None,
+        None,
+        {"HttpOnly": ""} if httponly else {},
+        False,
+    )
+
+
+def _iter_netscape_cookies(path: str) -> list[http.cookiejar.Cookie]:
+    cookies: list[http.cookiejar.Cookie] = []
     text = Path(path).read_text(encoding="utf-8")
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
-        http_only = line.startswith("#HttpOnly_")
-        if line.startswith("#") and not http_only:
+        httponly = line.startswith("#HttpOnly_")
+        if line.startswith("#") and not httponly:
             continue
-        if http_only:
+        if httponly:
             line = line[len("#HttpOnly_") :]
         parts = line.split("\t")
         if len(parts) < 7:
             continue
-        domain, _flag, _path, _secure, _exp, name, value = parts[:7]
-        host = domain.lstrip(".")
-        if host.endswith(("youtube.com", "google.com")):
-            cookies[name] = value
-    if not cookies:
-        raise RuntimeError(f"Aucun cookie YouTube/Google dans {path}.")
-    present = [name for name in ("SAPISID", "__Secure-3PAPISID", "LOGIN_INFO", "SID") if name in cookies]
-    debug(
-        f"cookies {path}: {len(cookies)} noms, auth={present or 'aucun'}"
-    )
+        domain, _flag, cookie_path, secure, exp, name, value = parts[:7]
+        if not _cookie_host_ok(domain):
+            continue
+        cookies.append(
+            _netscape_cookie(domain, cookie_path, secure, exp, name, value, httponly)
+        )
     return cookies
+
+
+class CookieStore:
+    """Netscape cookies.txt that absorbs Set-Cookie and writes itself back."""
+
+    def __init__(self, path: str) -> None:
+        self.path = str(Path(path))
+        self.jar = http.cookiejar.MozillaCookieJar(
+            filename=self.path,
+            policy=_StudioCookiePolicy(),
+        )
+        self._saved_mtime = 0.0
+        self._load()
+
+    def _load(self) -> None:
+        path = Path(self.path)
+        if not path.is_file():
+            raise RuntimeError(f"Fichier cookies introuvable: {self.path}\n\n{COOKIE_HELP}")
+        loaded = False
+        try:
+            self.jar.load(ignore_discard=True, ignore_expires=True)
+            loaded = True
+        except (OSError, http.cookiejar.LoadError, UnicodeError, ValueError):
+            debug("cookies mozilla load failed, fallback parser")
+        if not loaded or sum(1 for _ in self.jar) == 0:
+            self.jar.clear()
+            for cookie in _iter_netscape_cookies(self.path):
+                self.jar.set_cookie(cookie)
+        if sum(1 for _ in self.jar) == 0:
+            raise RuntimeError(f"Aucun cookie YouTube/Google dans {self.path}.")
+        present = [
+            cookie.name
+            for cookie in self.jar
+            if cookie.name in {"SAPISID", "__Secure-3PAPISID", "LOGIN_INFO", "SID"}
+        ]
+        debug(f"cookies {self.path}: {sum(1 for _ in self.jar)} noms, auth={present or 'aucun'}")
+        self._saved_mtime = path.stat().st_mtime
+
+    def reload_if_externally_changed(self) -> None:
+        path = Path(self.path)
+        if not path.is_file():
+            return
+        mtime = path.stat().st_mtime
+        if mtime <= self._saved_mtime:
+            return
+        debug(f"cookies reload from disk {self.path}")
+        self.jar.clear()
+        self._load()
+
+    def as_dict(self) -> dict[str, str]:
+        ranked: dict[str, tuple[int, str]] = {}
+        now = time.time()
+        for cookie in self.jar:
+            if not _cookie_host_ok(cookie.domain):
+                continue
+            if cookie.expires is not None and cookie.expires > 0 and cookie.expires < now:
+                continue
+            value = cookie.value
+            if value is None:
+                continue
+            rank = 2 if cookie.domain.lstrip(".").endswith("youtube.com") else 1
+            previous = ranked.get(cookie.name)
+            if previous is None or rank >= previous[0]:
+                ranked[cookie.name] = (rank, value)
+        return {name: value for name, (_rank, value) in ranked.items()}
+
+    def _fingerprint(self) -> tuple[tuple[str, str, str, str], ...]:
+        return tuple(
+            sorted(
+                (cookie.domain, cookie.path, cookie.name, cookie.value)
+                for cookie in self.jar
+                if cookie.value is not None
+            )
+        )
+
+    def absorb(self, request: urllib.request.Request, response: object) -> None:
+        before = self._fingerprint()
+        before_names = {(cookie.domain, cookie.path, cookie.name): cookie.value for cookie in self.jar}
+        try:
+            self.jar.extract_cookies(cast(HTTPResponse, response), request)
+        except (AttributeError, OSError, ValueError):
+            debug("cookies extract skipped")
+            return
+        if self._fingerprint() == before:
+            return
+        changed = [
+            cookie.name
+            for cookie in self.jar
+            if before_names.get((cookie.domain, cookie.path, cookie.name)) != cookie.value
+        ]
+        debug(f"cookies refresh {', '.join(changed) or 'unknown'} -> {self.path}")
+        self.save()
+
+    def save(self) -> None:
+        path = Path(self.path)
+        tmp = path.with_name(path.name + ".tmp")
+        self.jar.save(filename=str(tmp), ignore_discard=True, ignore_expires=True)
+        tmp.replace(path)
+        self._saved_mtime = path.stat().st_mtime
+
+
+_cookie_stores: dict[str, CookieStore] = {}
+
+
+def cookie_store(path: str) -> CookieStore:
+    resolved = str(Path(path).resolve())
+    store = _cookie_stores.get(resolved)
+    if store is None:
+        store = CookieStore(path)
+        _cookie_stores[resolved] = store
+    else:
+        store.reload_if_externally_changed()
+    return store
+
+
+def load_netscape_cookies(path: str) -> dict[str, str]:
+    return CookieStore(path).as_dict()
 
 
 def sapisid_from_cookies(cookies: dict[str, str]) -> str:
@@ -464,6 +719,20 @@ def sapisid_hash(sapisid: str, origin: str = STUDIO_ORIGIN) -> str:
     return f"{timestamp}_{digest}"
 
 
+def _cookie_header(cookies: dict[str, str]) -> str:
+    return "; ".join(f"{name}={value}" for name, value in cookies.items())
+
+
+def studio_page_headers(cookies: dict[str, str]) -> dict[str, str]:
+    """Cookies only for the HTML page. SAPISIDHASH belongs on youtubei POSTs."""
+    return {
+        "Cookie": _cookie_header(cookies),
+        "Referer": f"{STUDIO_ORIGIN}/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    }
+
+
 def studio_headers(
     cookies: dict[str, str],
     origin: str = STUDIO_ORIGIN,
@@ -473,7 +742,7 @@ def studio_headers(
     debug(f"studio headers origin={origin} auth_user={auth_user} sapisidhash_ts={token.split('_', 1)[0]}")
     return {
         "Authorization": f"SAPISIDHASH {token} SAPISID1PHASH {token} SAPISID3PHASH {token}",
-        "Cookie": "; ".join(f"{name}={value}" for name, value in cookies.items()),
+        "Cookie": _cookie_header(cookies),
         "Origin": origin,
         "X-Origin": origin,
         "Referer": f"{origin}/",
@@ -632,43 +901,181 @@ def _studio_payload(context: dict[str, object], channel_id: str) -> dict[str, ob
     }
 
 
+def _default_studio_context() -> dict[str, object]:
+    return {
+        "client": {
+            "hl": "fr",
+            "gl": "FR",
+            "clientName": "WEB_CREATOR",
+            "clientVersion": "1.20240820.01.00",
+            "userAgent": USER_AGENT,
+        },
+        "user": {"lockedSafetyMode": False},
+    }
+
+
 def _studio_api_url(endpoint: str, api_key: str | None) -> str:
     if not api_key:
         return endpoint
     return f"{endpoint}&key={urllib.parse.quote(api_key)}"
 
 
-def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
-    if not Path(cookies_path).is_file():
+@dataclass
+class StudioSession:
+    store: CookieStore
+    auth_user: str
+    context: dict[str, object]
+    query_id: str
+    api_key: str | None
+    html: str
+    loaded_at: float
+
+    def api_headers(self) -> dict[str, str]:
+        headers = studio_headers(self.store.as_dict(), auth_user=self.auth_user)
+        client = self.context.get("client")
+        if isinstance(client, dict):
+            version = client.get("clientVersion")
+            if isinstance(version, str) and version:
+                headers["X-YouTube-Client-Version"] = version
+            if client.get("clientName") == "WEB_CREATOR":
+                headers["X-YouTube-Client-Name"] = WEB_CREATOR_CLIENT_NAME
+        return headers
+
+
+_studio_sessions: dict[str, StudioSession] = {}
+
+
+def _probe_studio_session(session: StudioSession) -> bool:
+    try:
+        data = http_post_json(
+            _studio_api_url(STUDIO_ANALYTICS_API, session.api_key),
+            {
+                "context": session.context,
+                "screenConfig": {
+                    "entity": {"channelId": session.query_id},
+                    "screenId": "channel_analytics_overview",
+                },
+            },
+            headers=session.api_headers(),
+            cookie_store=session.store,
+        )
+    except urllib.error.HTTPError as exc:
+        debug(f"studio probe auth_user={session.auth_user} HTTP {exc.code}")
+        try:
+            exc.read()
+        except OSError:
+            pass
+        return False
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        debug(f"studio probe auth_user={session.auth_user}: {exc}")
+        return False
+    if isinstance(data.get("error"), dict):
+        return False
+    return extract_lifetime_subscribers(data) is not None or "responseContext" in data
+
+
+def _api_only_studio_session(
+    channel_id: str,
+    store: CookieStore,
+) -> StudioSession | None:
+    context = _default_studio_context()
+    for auth_user in ("0", "1", "2", "3", "4", "5", "6"):
+        session = StudioSession(
+            store=store,
+            auth_user=auth_user,
+            context=context,
+            query_id=channel_id,
+            api_key=None,
+            html="",
+            loaded_at=time.time(),
+        )
+        if _probe_studio_session(session):
+            debug(f"studio API-only session auth_user={auth_user}")
+            return session
+    return None
+
+
+def load_studio_session(
+    channel_id: str,
+    cookies_path: str,
+    *,
+    force: bool = False,
+) -> StudioSession:
+    path = Path(cookies_path)
+    if not path.is_file():
         raise RuntimeError(f"Fichier cookies introuvable: {cookies_path}\n\n{COOKIE_HELP}")
 
-    cookies = load_netscape_cookies(cookies_path)
-    headers = studio_headers(cookies)
-    html, final_url = http_get_text(STUDIO_ORIGIN + "/", headers=headers)
-    logged_in = studio_session_ok(html, final_url)
+    store = cookie_store(cookies_path)
+    cached = _studio_sessions.get(cookies_path)
+    if (
+        cached is not None
+        and not force
+        and (time.time() - cached.loaded_at) < STUDIO_SESSION_TTL_S
+    ):
+        debug(f"studio session cache age={int(time.time() - cached.loaded_at)}s")
+        return cached
+
+    html = ""
+    final_url = STUDIO_ORIGIN + "/"
+    try:
+        html, final_url = http_get_text(
+            STUDIO_ORIGIN + "/",
+            headers=studio_headers(store.as_dict()),
+            opener=_studio_html_opener(),
+            cookie_store=store,
+        )
+    except urllib.error.HTTPError as exc:
+        login = _http_error_is_login(exc)
+        detail = http_error_detail(exc)
+        debug(f"studio HTML {detail} login={login}")
+        if cached is not None:
+            debug("studio HTML failed, reuse session cache")
+            return cached
+        html = ""
+
+    logged_in = bool(html) and studio_session_ok(html, final_url)
     debug(
         f"studio session url={final_url} html={len(html)} bytes "
-        f"logged_in={logged_in} channel={_ytcfg_field(html, 'CHANNEL_ID')} "
+        f"logged_in={logged_in} channel={_ytcfg_field(html, 'CHANNEL_ID') if html else None} "
         f"service_login_in_html={'ServiceLogin' in html}"
     )
-    if not logged_in:
-        raise RuntimeError(
-            "Session YouTube Studio expirée ou cookies invalides.\n\n" + COOKIE_HELP
+    if logged_in:
+        auth_user = _ytcfg_field(html, "SESSION_INDEX") or "0"
+        context, query_id, api_key = _studio_context(html, channel_id)
+        client = context.get("client")
+        client_version = client.get("clientVersion") if isinstance(client, dict) else None
+        debug(
+            f"studio ytcfg query_id={query_id} session_index={auth_user} "
+            f"api_key={'oui' if api_key else 'non'} client={client_version} "
+            f"delegated={'oui' if _ytcfg_field(html, 'DELEGATED_SESSION_ID') else 'non'}"
         )
+        session = StudioSession(
+            store=store,
+            auth_user=auth_user,
+            context=context,
+            query_id=query_id,
+            api_key=api_key,
+            html=html,
+            loaded_at=time.time(),
+        )
+        _studio_sessions[cookies_path] = session
+        return session
 
-    auth_user = _ytcfg_field(html, "SESSION_INDEX") or "0"
-    headers = studio_headers(cookies, auth_user=auth_user)
-    context, query_id, api_key = _studio_context(html, channel_id)
-    client = context.get("client")
-    client_version = None
-    if isinstance(client, dict):
-        client_version = client.get("clientVersion")
-    debug(
-        f"studio ytcfg query_id={query_id} session_index={auth_user} "
-        f"api_key={'oui' if api_key else 'non'} client={client_version} "
-        f"delegated={'oui' if _ytcfg_field(html, 'DELEGATED_SESSION_ID') else 'non'}"
+    api_session = _api_only_studio_session(channel_id, store)
+    if api_session is not None:
+        _studio_sessions[cookies_path] = api_session
+        return api_session
+    if cached is not None:
+        return cached
+    raise RuntimeError(
+        "Session YouTube Studio expirée ou cookies invalides.\n\n" + COOKIE_HELP
     )
-    errors: list[str] = []
+
+
+def _studio_count_from_apis(session: StudioSession, errors: list[str]) -> int | None:
+    context = session.context
+    query_id = session.query_id
+    api_key = session.api_key
 
     analytics_payload: dict[str, object] = {
         "context": context,
@@ -681,7 +1088,8 @@ def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
         data = http_post_json(
             _studio_api_url(STUDIO_ANALYTICS_API, api_key),
             analytics_payload,
-            headers=headers,
+            headers=session.api_headers(),
+            cookie_store=session.store,
         )
         count = extract_lifetime_subscribers(data)
         debug(
@@ -696,9 +1104,9 @@ def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
         else:
             errors.append("analytics: Abonnés actuels absent")
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")[:300]
-        debug(f"analytics HTTP {exc.code}: {body}")
-        errors.append(f"analytics HTTP {exc.code}: {body}")
+        detail = http_error_detail(exc)
+        debug(f"analytics HTTP {detail}")
+        errors.append(f"analytics HTTP {detail}")
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, TypeError) as exc:
         debug(f"analytics: {exc}")
         errors.append(f"analytics: {exc}")
@@ -713,37 +1121,58 @@ def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
             {"context": context, "channelId": query_id},
         ),
     ):
+        name = endpoint.split("/")[-1]
         try:
             data = http_post_json(
                 _studio_api_url(endpoint, api_key),
                 payload,
-                headers=headers,
+                headers=session.api_headers(),
+                cookie_store=session.store,
             )
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode(errors="replace")[:300]
-            debug(f"{endpoint.split('/')[-1]} HTTP {exc.code}: {body}")
-            errors.append(f"{endpoint.split('/')[-1]} HTTP {exc.code}: {body}")
+            detail = http_error_detail(exc)
+            debug(f"{name} HTTP {detail}")
+            errors.append(f"{name} HTTP {detail}")
             continue
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, TypeError) as exc:
-            debug(f"{endpoint.split('/')[-1]}: {exc}")
-            errors.append(f"{endpoint.split('/')[-1]}: {exc}")
+            debug(f"{name}: {exc}")
+            errors.append(f"{name}: {exc}")
             continue
         count = extract_studio_subscriber_count(data, query_id)
         debug(
-            f"{endpoint.split('/')[-1]} subscriberCount={count} "
+            f"{name} subscriberCount={count} "
             f"rounded={looks_publicly_rounded(count) if count is not None else None}"
         )
         if count is not None and not looks_publicly_rounded(count):
-            debug(f"count source={endpoint.split('/')[-1]} value={count}")
+            debug(f"count source={name} value={count}")
             return count
         if count is not None:
-            errors.append(
-                f"{endpoint.split('/')[-1]}: encore arrondi ({count}), pas le chiffre Studio"
-            )
+            errors.append(f"{name}: encore arrondi ({count}), pas le chiffre Studio")
         else:
-            errors.append(f"{endpoint.split('/')[-1]}: subscriberCount absent")
+            errors.append(f"{name}: subscriberCount absent")
+    return None
 
-    embedded = extract_studio_subscriber_count(_extract_embedded_json(html), query_id)
+
+def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
+    session = load_studio_session(channel_id, cookies_path)
+    errors: list[str] = []
+    count = _studio_count_from_apis(session, errors)
+    if count is not None:
+        return count
+
+    http_fail = any("HTTP 400" in err or "HTTP 401" in err or "HTTP 403" in err for err in errors)
+    if http_fail:
+        debug("studio APIs HTTP error, refresh session")
+        session = load_studio_session(channel_id, cookies_path, force=True)
+        errors = []
+        count = _studio_count_from_apis(session, errors)
+        if count is not None:
+            return count
+
+    embedded = extract_studio_subscriber_count(
+        _extract_embedded_json(session.html),
+        session.query_id,
+    )
     debug(
         f"html embedded subscriberCount={embedded} "
         f"rounded={looks_publicly_rounded(embedded) if embedded is not None else None}"
@@ -753,7 +1182,6 @@ def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
         return embedded
 
     debug(f"studio échec: {' | '.join(errors)}")
-
     raise RuntimeError(
         "Impossible de lire le nombre exact depuis YouTube Studio. "
         + " | ".join(errors)
@@ -844,6 +1272,52 @@ FONT_5X7: dict[str, tuple[str, ...]] = {
     "?": (" ### ", "#   #", "    #", "  ## ", "  #  ", "     ", "  #  "),
 }
 
+# Play YouTube 11x7 : pill 2017+, coins 2 px, triangle optiquement centré.
+YOUTUBE_PLAY: tuple[str, ...] = (
+    "  #######  ",
+    " ######### ",
+    "###WW######",
+    "###WWW#####",
+    "###WW######",
+    " ######### ",
+    "  #######  ",
+)
+
+# Label 4x5 : caption moderne, le 5x7 reste pour le chiffre.
+FONT_4X5: dict[str, tuple[str, ...]] = {
+    "A": (" ## ", "#  #", "####", "#  #", "#  #"),
+    "B": ("### ", "#  #", "### ", "#  #", "### "),
+    "C": (" ## ", "#   ", "#   ", "#   ", " ## "),
+    "D": ("### ", "#  #", "#  #", "#  #", "### "),
+    "E": ("####", "#   ", "### ", "#   ", "####"),
+    "F": ("####", "#   ", "### ", "#   ", "#   "),
+    "G": (" ###", "#   ", "# ##", "#  #", " ###"),
+    "H": ("#  #", "#  #", "####", "#  #", "#  #"),
+    "I": ("####", " #  ", " #  ", " #  ", "####"),
+    "J": ("  ##", "   #", "   #", "#  #", " ## "),
+    "K": ("#  #", "# # ", "##  ", "# # ", "#  #"),
+    "L": ("#   ", "#   ", "#   ", "#   ", "####"),
+    "M": ("#  #", "####", "#  #", "#  #", "#  #"),
+    "N": ("#  #", "## #", "# ##", "#  #", "#  #"),
+    "O": (" ## ", "#  #", "#  #", "#  #", " ## "),
+    "P": ("### ", "#  #", "### ", "#   ", "#   "),
+    "Q": (" ## ", "#  #", "#  #", "# # ", " # #"),
+    "R": ("### ", "#  #", "### ", "# # ", "#  #"),
+    "S": (" ###", "#   ", " ## ", "   #", "### "),
+    "T": ("####", " #  ", " #  ", " #  ", " #  "),
+    "U": ("#  #", "#  #", "#  #", "#  #", " ## "),
+    "V": ("#  #", "#  #", "#  #", " ## ", "  # "),
+    "W": ("#  #", "#  #", "#  #", "####", "#  #"),
+    "X": ("#  #", " ## ", "  # ", " ## ", "#  #"),
+    "Y": ("#  #", "#  #", " ## ", " #  ", " #  "),
+    "Z": ("####", "   #", " ## ", "#   ", "####"),
+    " ": ("    ", "    ", "    ", "    ", "    "),
+    "?": (" ## ", "#  #", "  # ", "    ", " #  "),
+}
+
+
+BitmapFont = dict[str, tuple[str, ...]]
+
 
 def _name_lines(name: str) -> list[str]:
     compact = name.replace(" ", "").upper()
@@ -860,14 +1334,18 @@ def _parse_hex_color(color: str) -> PixelColor:
     return (color_bytes[0], color_bytes[1], color_bytes[2])
 
 
-def _glyph(char: str) -> tuple[str, ...]:
-    return FONT_5X7.get(char.upper(), FONT_5X7["?"])
+def _glyph(char: str, font: BitmapFont = FONT_5X7) -> tuple[str, ...]:
+    return font.get(char.upper(), font.get("?", FONT_5X7["?"]))
 
 
-def _text_pixel_size(text: str, gap: int = 1) -> tuple[int, int]:
+def _text_pixel_size(
+    text: str,
+    gap: int = 1,
+    font: BitmapFont = FONT_5X7,
+) -> tuple[int, int]:
     if not text:
         return 0, 0
-    glyphs = [_glyph(char) for char in text]
+    glyphs = [_glyph(char, font) for char in text]
     width = sum(len(glyph[0]) for glyph in glyphs) + gap * (len(glyphs) - 1)
     height = len(glyphs[0])
     return width, height
@@ -900,44 +1378,32 @@ def _blit_text(
     top: int,
     color: PixelColor,
     gap: int = 2,
+    x_min: int = 0,
+    x_max: int | None = None,
+    font: BitmapFont = FONT_5X7,
 ) -> None:
-    glyphs = [_glyph(char) for char in text]
-    total_w, _total_h = _text_pixel_size(text, gap)
-    cursor = (image.width - total_w) // 2
+    glyphs = [_glyph(char, font) for char in text]
+    total_w, _total_h = _text_pixel_size(text, gap, font)
+    right = image.width if x_max is None else x_max
+    cursor = x_min + max(0, (right - x_min - total_w) // 2)
     for glyph in glyphs:
         _blit_glyph(image, glyph, cursor, top, color)
         cursor += len(glyph[0]) + gap
 
 
-def _draw_corners(image: Image.Image, color: PixelColor, size: int = 2) -> None:
-    width, height = image.size
+def _blit_youtube_play(image: Image.Image, origin_x: int, origin_y: int) -> None:
     pixels = image.load()
     if pixels is None:
         return
-    for i in range(size):
-        pixels[i, 0] = color
-        pixels[0, i] = color
-        pixels[width - 1 - i, 0] = color
-        pixels[width - 1, i] = color
-        pixels[i, height - 1] = color
-        pixels[0, height - 1 - i] = color
-        pixels[width - 1 - i, height - 1] = color
-        pixels[width - 1, height - 1 - i] = color
-
-
-def _draw_circuit_line(image: Image.Image, y: int, color: PixelColor) -> None:
     width, height = image.size
-    if y <= 0 or y >= height:
-        return
-    pixels = image.load()
-    if pixels is None:
-        return
-    left = 6
-    right = width - 7
-    for x in range(left, right + 1):
-        pixels[x, y] = color
-    pixels[left, y] = color
-    pixels[right, y] = color
+    for row, line in enumerate(YOUTUBE_PLAY):
+        for col, cell in enumerate(line):
+            if cell == " ":
+                continue
+            x = origin_x + col
+            y = origin_y + row
+            if 0 <= x < width and 0 <= y < height:
+                pixels[x, y] = BRAND_WHITE if cell == "W" else BRAND_YT_RED
 
 
 def render_matrix_png(
@@ -951,17 +1417,35 @@ def render_matrix_png(
     del font_name
     accent = _parse_hex_color(color) if color else BRAND_CYAN
     image = Image.new("RGB", (width, height), BRAND_BG)
+    logo_w = len(YOUTUBE_PLAY[0])
+    logo_h = len(YOUTUBE_PLAY)
+    count_gap = 2 if _text_pixel_size(count_text, 2)[0] <= width - 4 else 1
+    _, count_h = _text_pixel_size(count_text, count_gap)
     name_lines = _name_lines(name)
-    glyph_h = 7
-    name_top = 2
-    line_gap = 3
+    label_h = 5
+    label_gap_y = 1
+    label_block = len(name_lines) * label_h + max(0, len(name_lines) - 1) * label_gap_y
+
+    # Widget Pixoo / LaMetric : icône collée au chiffre, caption un cran plus bas.
+    gap_a = 2
+    gap_b = 3
+    block_h = logo_h + gap_a + count_h + gap_b + label_block
+    top = max(1, (height - block_h) // 2)
+    logo_y = top
+    count_y = logo_y + logo_h + gap_a
+    label_y = count_y + count_h + gap_b
+
+    _blit_youtube_play(image, (width - logo_w) // 2, logo_y)
+    _blit_text(image, count_text, count_y, accent, gap=count_gap)
     for index, line in enumerate(name_lines):
-        _blit_text(image, line, name_top + index * (glyph_h + line_gap), BRAND_WHITE)
-    separator_y = name_top + len(name_lines) * glyph_h + (len(name_lines) - 1) * line_gap + 2
-    _draw_circuit_line(image, separator_y, accent)
-    count_top = separator_y + 3
-    _blit_text(image, count_text, count_top, accent)
-    _draw_corners(image, accent)
+        _blit_text(
+            image,
+            line,
+            label_y + index * (label_h + label_gap_y),
+            BRAND_WHITE,
+            gap=1,
+            font=FONT_4X5,
+        )
 
     buffer = BytesIO()
     image.save(buffer, format="PNG")
@@ -1118,8 +1602,7 @@ def main() -> int:
                 cookies_path=args.cookies,
             )
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode(errors="replace")
-            print(f"Erreur HTTP {exc.code}: {body}", file=sys.stderr)
+            print(f"Erreur HTTP {http_error_detail(exc)}", file=sys.stderr)
             return 1
         except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
             print(f"Erreur: {exc}", file=sys.stderr)
@@ -1129,6 +1612,7 @@ def main() -> int:
 
     device: pypixelcolor.Client | None = None
     last_count: int | None = None
+    last_error: str | None = None
     min_interval = 15 if args.source == "studio" else 5 if args.source == "live" else 10
 
     try:
@@ -1144,11 +1628,17 @@ def main() -> int:
                     cookies_path=args.cookies,
                 )
             except urllib.error.HTTPError as exc:
-                body = exc.read().decode(errors="replace")
-                print(f"Erreur HTTP {exc.code}: {body}", file=sys.stderr)
+                message = f"Erreur HTTP {http_error_detail(exc)}"
+                if message != last_error:
+                    print(message, file=sys.stderr)
+                    last_error = message
             except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
-                print(f"Erreur: {exc}", file=sys.stderr)
+                message = f"Erreur: {exc}"
+                if message != last_error:
+                    print(message, file=sys.stderr)
+                    last_error = message
             else:
+                last_error = None
                 if count != last_count:
                     count_text = str(count)
                     print(f"{time.strftime('%H:%M:%S')}  {channel_name} {format_count(count)}")
