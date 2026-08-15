@@ -1,18 +1,17 @@
-# Tout passe par nerdctl (BlueZ dans l’image, ou bluetoothd du Pi via D-Bus).
-#
-#   nerdctl build -f Containerfile -t ipixel .
-#   nerdctl compose run --rm ipixel scan
-#   export IPIXEL_ADDRESS=AA:BB:CC:DD:EE:FF
+# Image Linux (amd64 + arm64) publiée sur GHCR à chaque push sur main.
+#   nerdctl pull ghcr.io/maximee-leroyy/ipixel-youtube:latest
 #   nerdctl compose up -d
+#
+# Build local : nerdctl compose build
 
 name: ipixel
 
 services:
   ipixel:
+    image: ghcr.io/maximee-leroyy/ipixel-youtube:latest
     build:
       context: .
       dockerfile: Containerfile
-    image: ipixel:latest
     container_name: ipixel
     init: true
     restart: unless-stopped

@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1
 #
-# Image linux/arm64 : même archi sur Mac Apple Silicon et Raspberry Pi 5.
-#   nerdctl build -f Containerfile -t ipixel .
-#   nerdctl compose run --rm ipixel scan
-#   nerdctl compose up -d
+# Image linux/amd64 + linux/arm64 (Pi 5), publiée sur
+#   ghcr.io/maximee-leroyy/ipixel-youtube
+#   nerdctl pull ghcr.io/maximee-leroyy/ipixel-youtube:latest
 #
 # BlueZ tourne dans le container (ou on réutilise celui du Pi via D-Bus).
 
@@ -61,6 +60,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
     YOUTUBE_COOKIES=/app/cookies.txt
 
 LABEL org.opencontainers.image.title="ipixel-youtube" \
-      org.opencontainers.image.description="Live YouTube subscriber counter for iPixel Color 32×32"
+      org.opencontainers.image.description="Live YouTube subscriber counter for iPixel Color 32×32" \
+      org.opencontainers.image.source="https://github.com/maximee-leroyy/ipixel-youtube" \
+      org.opencontainers.image.url="https://github.com/maximee-leroyy/ipixel-youtube" \
+      org.opencontainers.image.licenses="MIT"
 
 ENTRYPOINT ["/entrypoint.sh"]

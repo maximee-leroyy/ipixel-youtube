@@ -42,14 +42,14 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-## Container (nerdctl)
+## Container (Linux / GHCR)
 
-Tout passe par nerdctl. BlueZ est **dans** l’image : si le Pi a déjà `bluetoothd`, on réutilise son D-Bus ; sinon le container démarre le sien.
+Image Linux **amd64** et **arm64** (Pi 5) : `ghcr.io/maximee-leroyy/ipixel-youtube`.
 
 ```bash
-nerdctl build -f Containerfile -t ipixel .
+nerdctl pull ghcr.io/maximee-leroyy/ipixel-youtube:latest
 nerdctl compose run --rm ipixel scan
-export IPIXEL_ADDRESS=AA:BB:CC:DD:EE:FF   # MAC Linux, pas l’UUID macOS
+export IPIXEL_ADDRESS=AA:BB:CC:DD:EE:FF
 nerdctl compose up -d
 ```
 
@@ -60,19 +60,14 @@ nerdctl run --rm --network host --privileged \
   -v /run/dbus/system_bus_socket:/host/dbus/system_bus_socket \
   -v ./cookies.txt:/app/cookies.txt \
   -e IPIXEL_ADDRESS=AA:BB:CC:DD:EE:FF \
-  ipixel
+  ghcr.io/maximee-leroyy/ipixel-youtube:latest
 ```
 
-`--print-count` / `--preview` / `--source live` : `nerdctl compose run --rm ipixel --print-count`. Dessin : `-v ./mon.gif:/app/drawing.gif:ro` et `ipixel --image /app/drawing.gif`.
+`--print-count` / `--preview` / `--source live` : `nerdctl compose run --rm ipixel --print-count`. Dessin : `-v ./mon.gif:/app/drawing.gif:ro` puis `--image /app/drawing.gif`.
 
-La puce BLE **intégrée du Mac** n’est pas un périphérique HCI Linux : Lima ne peut pas la passer au container. Scan et panneau en nerdctl, c’est sur le **Pi 5** (`sudo systemctl enable --now bluetooth`). Transfert d’image :
+Scan et panneau BLE : **Linux** (Pi 5), BlueZ hôte allumé (`sudo systemctl enable --now bluetooth`). Sur Mac, nerdctl est une VM sans HCI : `--print-count` seulement.
 
-```bash
-nerdctl save ipixel | gzip > ipixel.tar.gz
-scp ipixel.tar.gz pi@raspberrypi:
-# sur le Pi :
-gunzip -c ipixel.tar.gz | nerdctl load
-```
+Build local : `nerdctl compose build`. L’image est publiée sur GHCR à chaque push sur `main` (Actions → Container image). Le paquet GHCR est privé au premier push : Package settings → Change visibility → Public.
 
 ## Trouver le panneau
 
