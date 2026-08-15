@@ -24,7 +24,7 @@ tests/
 
 ## Prérequis
 
-- Python 3.11+
+- Python 3.13.7
 - Un panneau iPixel Color (testé en 32×32)
 - Bluetooth allumé, panneau sous tension
 
@@ -42,16 +42,48 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+## Container (nerdctl)
+
+Tout passe par nerdctl. BlueZ est **dans** l’image : si le Pi a déjà `bluetoothd`, on réutilise son D-Bus ; sinon le container démarre le sien.
+
+```bash
+nerdctl build -f Containerfile -t ipixel .
+nerdctl compose run --rm ipixel scan
+export IPIXEL_ADDRESS=AA:BB:CC:DD:EE:FF   # MAC Linux, pas l’UUID macOS
+nerdctl compose up -d
+```
+
+Sans Compose :
+
+```bash
+nerdctl run --rm --network host --privileged \
+  -v /run/dbus/system_bus_socket:/host/dbus/system_bus_socket \
+  -v ./cookies.txt:/app/cookies.txt \
+  -e IPIXEL_ADDRESS=AA:BB:CC:DD:EE:FF \
+  ipixel
+```
+
+`--print-count` / `--preview` / `--source live` : `nerdctl compose run --rm ipixel --print-count`. Dessin : `-v ./mon.gif:/app/drawing.gif:ro` et `ipixel --image /app/drawing.gif`.
+
+La puce BLE **intégrée du Mac** n’est pas un périphérique HCI Linux : Lima ne peut pas la passer au container. Scan et panneau en nerdctl, c’est sur le **Pi 5** (`sudo systemctl enable --now bluetooth`). Transfert d’image :
+
+```bash
+nerdctl save ipixel | gzip > ipixel.tar.gz
+scp ipixel.tar.gz pi@raspberrypi:
+# sur le Pi :
+gunzip -c ipixel.tar.gz | nerdctl load
+```
+
 ## Trouver le panneau
 
 ```bash
-python -m pypixelcolor --scan
+nerdctl compose run --rm ipixel scan
 ```
 
-Note l’adresse (sur macOS c’est souvent un UUID, pas une adresse MAC) :
+Note l’adresse Linux (MAC `AA:BB:CC:…`), pas un UUID macOS :
 
 ```text
-LED_BLE_XXXXXXXX (00000000-0000-0000-0000-000000000000)
+LED_BLE_XXXXXXXX (AA:BB:CC:DD:EE:FF)
 ```
 
 ## Lancer

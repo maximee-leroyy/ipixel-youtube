@@ -1,0 +1,33 @@
+# Tout passe par nerdctl (BlueZ dans l’image, ou bluetoothd du Pi via D-Bus).
+#
+#   nerdctl build -f Containerfile -t ipixel .
+#   nerdctl compose run --rm ipixel scan
+#   export IPIXEL_ADDRESS=AA:BB:CC:DD:EE:FF
+#   nerdctl compose up -d
+
+name: ipixel
+
+services:
+  ipixel:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: ipixel:latest
+    container_name: ipixel
+    init: true
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /run/dbus/system_bus_socket:/host/dbus/system_bus_socket
+      - ./cookies.txt:/app/cookies.txt
+    environment:
+      IPIXEL_ADDRESS: ${IPIXEL_ADDRESS:-}
+      IPIXEL_BRIGHTNESS: ${IPIXEL_BRIGHTNESS:-1}
+      YOUTUBE_CHANNEL: ${YOUTUBE_CHANNEL:-@example}
+      YOUTUBE_COOKIES: /app/cookies.txt
+      YOUTUBE_DEBUG: ${YOUTUBE_DEBUG:-}
+      HOST_DBUS_SOCKET: /host/dbus/system_bus_socket
