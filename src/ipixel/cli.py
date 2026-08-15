@@ -93,9 +93,9 @@ def _run_drawing(
 @click.option(
     "--address",
     envvar="IPIXEL_ADDRESS",
-    default="00000000-0000-0000-0000-000000000000",
+    default=None,
     show_envvar=True,
-    help="Adresse Bluetooth du panneau. Trouve-la avec: python -m pypixelcolor --scan",
+    help="Adresse Bluetooth du panneau (MAC Linux ou UUID macOS). Obligatoire sauf --preview / --print-count.",
 )
 @click.option(
     "--channel",
@@ -220,7 +220,7 @@ def _run_drawing(
     help="Logs détaillés sur stderr (HTTP, session Studio, extraction).",
 )
 def main(
-    address: str,
+    address: str | None,
     channel: str,
     source: str,
     cookies: str,
@@ -255,9 +255,12 @@ def main(
         return 2
 
     if image_path:
+        if not preview and not address:
+            print("Paramètres manquants: --address ou IPIXEL_ADDRESS", file=sys.stderr)
+            return 2
         return _run_drawing(
             image_path,
-            address=address,
+            address=address or "",
             brightness=brightness,
             save_slot=save_slot,
             wipe_slot=wipe_slot,
@@ -279,6 +282,8 @@ def main(
         missing.append("--api-key ou YOUTUBE_API_KEY")
     if source == "studio" and not Path(cookies).is_file():
         missing.append(f"--cookies ({cookies} introuvable)")
+    if not preview and not print_count and not address:
+        missing.append("--address ou IPIXEL_ADDRESS")
     if missing:
         print("Paramètres manquants: " + ", ".join(missing), file=sys.stderr)
         if source == "studio":
@@ -338,6 +343,7 @@ def main(
         if preview:
             return _save_preview(channel_name, panel, font, color, preview_dir)
 
+    assert address is not None
     device: pypixelcolor.Client | None = None
     last_count: int | None = None
     last_error: str | None = None

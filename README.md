@@ -114,7 +114,7 @@ Prépare un PNG 32×32 (Aseprite, Piskel, Photoshop…) puis :
 ipixel-youtube --image dessin.png --preview
 
 # Envoi au panneau
-ipixel-youtube --image dessin.png --address "00000000-0000-0000-0000-000000000000"
+ipixel-youtube --image dessin.png --address AA:BB:CC:DD:EE:FF
 ```
 
 Un GIF animé est envoyé tel quel (boucle). `--static` n’envoie que la première frame en PNG.
@@ -122,7 +122,7 @@ Un GIF animé est envoyé tel quel (boucle). `--static` n’envoie que la premi�
 ## Autre chaîne ou autre panneau
 
 ```bash
-ipixel-youtube --channel @taChaine --address 00000000-0000-0000-0000-000000000000
+ipixel-youtube --channel @taChaine --address AA:BB:CC:DD:EE:FF
 ```
 
 Estimation publique (arrondie / interpolée, **pas** le 1 093 Studio) :
@@ -145,7 +145,7 @@ pytest tests/test_matrix_32.py
 | Option | Défaut | Rôle |
 | --- | --- | --- |
 | `--channel` | `@example` | Handle ou ID `UC…` |
-| `--address` | UUID du panneau | Adresse Bluetooth |
+| `--address` | *(requis)* | Adresse Bluetooth (`IPIXEL_ADDRESS`) |
 | `--interval` | `15` | Secondes entre deux mises à jour |
 | `--name` | nom YouTube | Texte en haut du panneau |
 | `--brightness` | `100` | Luminosité globale du panneau 0–100 (`IPIXEL_BRIGHTNESS`) |
