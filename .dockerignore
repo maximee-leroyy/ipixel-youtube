@@ -23,5 +23,8 @@ cookies.txt
 *.txt.tmp
 
 assets/preview
+assets/personal
 assets/*.gif
 assets/*.png
+!assets/youtube.svg
+!assets/youtube.png

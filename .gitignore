@@ -229,6 +229,8 @@ __pycache__/
 /preview_led.png
 preview_CUS_*.png
 preview_VCR_*.png
+assets/preview/
+assets/personal/
 cookies.txt
 *cookies*.txt
 *.txt.tmp

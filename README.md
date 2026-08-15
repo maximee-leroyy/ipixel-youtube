@@ -6,15 +6,14 @@ Compteur d’abonnés YouTube en live pour une matrice LED **iPixel Color 32×32
 
 Le script récupère le nombre d’abonnés de [RYXACORE](https://www.youtube.com/@example), pixelise le vrai logo YouTube (SVG) avec [pyxelate](https://github.com/sedthh/pyxelate), compose le 32×32, et l’envoie au panneau via Bluetooth avec [pypixelcolor](https://lucagoc.fr/pypixelcolor/main/).
 
-![Simulation LED 32×32](assets/preview/led.png)
-
 ## Architecture
 
 ```text
 assets/
   youtube.svg            # marque officielle Simple Icons
   youtube.png            # fallback raster
-  preview/               # PNG/GIF générés (--preview)
+  preview/               # généré par --preview (gitignoré)
+  personal/              # dessins locaux --image (gitignoré)
 src/ipixel/
   cli.py                 # Click + boucle live
   youtube/               # cookies, Studio, APIs publiques
