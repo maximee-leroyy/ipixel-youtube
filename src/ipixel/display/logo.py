@@ -138,8 +138,8 @@ def youtube_logo_sprite() -> Image.Image:
     return _crop_visible(_array_to_image(transformed))
 
 
-def blit_logo(image: Image.Image, origin_x: int, origin_y: int) -> None:
-    sprite = youtube_logo_sprite()
+def blit_logo(image: Image.Image, origin_x: int, origin_y: int, sprite: Image.Image | None = None) -> None:
+    sprite = sprite if sprite is not None else youtube_logo_sprite()
     pixels = image.load()
     source = sprite.load()
     if pixels is None or source is None:

@@ -13,13 +13,12 @@ from ipixel.constants import (
     BRAND_CAPTION,
     BRAND_CYAN,
     BRAND_WHITE,
-    DEFAULT_BRIGHTNESS,
     SHEEN_FRAME_MS,
     SHEEN_FRAMES,
     SHEEN_HALF_WIDTH,
     PixelColor,
 )
-from ipixel.display.fonts import FONT_4X5, _blit_text, _draw_corners, _name_lines, _text_pixel_size
+from ipixel.display.fonts import FONT_4X5, _blit_text, _draw_corners, _fit_count, _name_lines, _text_pixel_size
 from ipixel.display.logo import blit_logo, youtube_logo_sprite
 
 
@@ -43,13 +42,12 @@ def render_matrix_image(
     image = Image.new("RGB", (width, height), BRAND_BG)
     logo = youtube_logo_sprite()
     logo_w, logo_h = logo.size
-    count_gap = 2 if _text_pixel_size(count_text, 2)[0] <= width - 4 else 1
-    _, count_h = _text_pixel_size(count_text, count_gap)
+    count_text, count_font, count_gap, count_separator_gap = _fit_count(count_text, width)
+    _, count_h = _text_pixel_size(count_text, count_gap, count_font, count_separator_gap)
     name_lines = _name_lines(name)
     label_h = 5
     label_gap_y = 1
     label_block = len(name_lines) * label_h + max(0, len(name_lines) - 1) * label_gap_y
-    # The pyxelated pill already has 1 px of visual padding on top/bottom.
     gap_a = 0 if logo_h >= 13 else 1 if logo_h >= 10 else 2
     gap_b = 1 if logo_h >= 10 else 2
     block_h = logo_h + gap_a + count_h + gap_b + label_block
@@ -58,7 +56,15 @@ def render_matrix_image(
     count_y = logo_y + logo_h + gap_a
     label_y = count_y + count_h + gap_b
     blit_logo(image, (width - logo_w) // 2, logo_y)
-    _blit_text(image, count_text, count_y, accent, gap=count_gap)
+    _blit_text(
+        image,
+        count_text,
+        count_y,
+        accent,
+        gap=count_gap,
+        font=count_font,
+        separator_gap=count_separator_gap,
+    )
     for index, line in enumerate(name_lines):
         _blit_text(
             image,
@@ -220,14 +226,13 @@ def write_preview(
     font_name: str,
     color: str | None,
     output_dir: str | Path | None = None,
-    brightness: int = DEFAULT_BRIGHTNESS,
 ) -> tuple[str, str, str]:
     folder = preview_dir(output_dir)
     png = render_matrix_png(name, count_text, 32, 32, color, font_name)
     frames, durations = render_matrix_frames(name, count_text, 32, 32, color, font_name)
-    native = apply_brightness(Image.open(BytesIO(png)).convert("RGB"), brightness)
+    native = Image.open(BytesIO(png)).convert("RGB")
     led = simulate_led_matrix(native)
-    led_frames = [simulate_led_matrix(apply_brightness(frame.convert("RGB"), brightness)) for frame in frames]
+    led_frames = [simulate_led_matrix(frame.convert("RGB")) for frame in frames]
     native_path = folder / "32x32.png"
     led_path = folder / "led.png"
     gif_path = folder / "preview.gif"

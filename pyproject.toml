@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "maxime1907" }]
 dependencies = [
     "bleak>=0.22",
+    "click>=8.1",
     "numpy>=1.26",
     "pillow>=10",
     "pymupdf>=1.24",

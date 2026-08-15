@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import argparse
-import os
 import sys
 import time
 import urllib.error
 from pathlib import Path
 
+import click
 import pypixelcolor
 
 from ipixel.constants import BLE_ERRORS, COOKIE_HELP, DEFAULT_BRIGHTNESS
-from ipixel.debug import debug, set_debug
+from ipixel.debug import debug as log_debug
+from ipixel.debug import set_debug
 from ipixel.display.device import clamp_brightness, connect_device, disconnect_device, display_count
 from ipixel.display.render import write_preview
 from ipixel.youtube.channel import fetch_channel_name, resolve_channel_id
@@ -20,169 +20,202 @@ from ipixel.youtube.counts import fetch_count, format_count
 from ipixel.youtube.http import http_error_detail
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="ipixel-youtube",
-        description="Affiche le nombre d'abonnés YouTube en live sur un iPixel Color.",
+def _save_preview(
+    channel_name: str,
+    count_text: str,
+    font: str,
+    color: str | None,
+    preview_dir: str | None,
+) -> int:
+    native_path, led_path, gif_path = write_preview(
+        channel_name,
+        count_text,
+        font,
+        color,
+        preview_dir,
     )
-    parser.add_argument(
-        "--address",
-        default=os.environ.get("IPIXEL_ADDRESS", "00000000-0000-0000-0000-000000000000"),
-        help="Adresse Bluetooth du panneau. "
-        "Ou variable d'environnement IPIXEL_ADDRESS. "
-        "Trouve-la avec: python -m pypixelcolor --scan",
-    )
-    parser.add_argument(
-        "--channel",
-        default=os.environ.get(
-            "YOUTUBE_CHANNEL",
-            os.environ.get("YOUTUBE_CHANNEL_ID", "@example"),
-        ),
-        help="ID de chaîne (UCxxxx) ou handle (@maChaine). Ou variable YOUTUBE_CHANNEL.",
-    )
-    parser.add_argument(
-        "--source",
-        choices=("studio", "live", "official"),
-        default="studio",
-        help="studio = chiffre exact YouTube Studio (cookies du propriétaire). "
-        "live = estimation Mixerno/SocialCounts. "
-        "official = YouTube Data API arrondie (--api-key).",
-    )
-    parser.add_argument(
-        "--cookies",
-        default=os.environ.get("YOUTUBE_COOKIES", "cookies.txt"),
-        help="Fichier cookies Netscape (session YouTube Studio). Ou variable YOUTUBE_COOKIES.",
-    )
-    parser.add_argument(
-        "--api-key",
-        default=os.environ.get("YOUTUBE_API_KEY"),
-        help="Clé API YouTube Data v3, seulement pour --source official.",
-    )
-    parser.add_argument(
-        "--interval",
-        type=int,
-        default=15,
-        help="Secondes entre deux requêtes (défaut: 15).",
-    )
-    parser.add_argument(
-        "--color",
-        default=None,
-        help="Override couleur accent hex. Défaut: palette RYXACORE (bleu/violet/cyan).",
-    )
-    parser.add_argument(
-        "--brightness",
-        type=int,
-        default=int(os.environ.get("IPIXEL_BRIGHTNESS", str(DEFAULT_BRIGHTNESS))),
-        metavar="0-100",
-        help="Luminosité globale du panneau 0-100 (défaut: 100). Ou IPIXEL_BRIGHTNESS.",
-    )
-    parser.add_argument(
-        "--font",
-        default="CUSONG",
-        help="Police: CUSONG, SIMSUN ou VCR_OSD_MONO (défaut: CUSONG, plus lisible en 32x32).",
-    )
-    parser.add_argument(
-        "--name",
-        default=os.environ.get("YOUTUBE_CHANNEL_NAME"),
-        help="Nom affiché en haut du panneau. Par défaut: le vrai nom YouTube (RYXACORE).",
-    )
-    parser.add_argument(
-        "--save-slot",
-        type=int,
-        default=0,
-        help="Slot 1-10 pour sauver en ROM. Défaut: 0 (affichage live, pas de ROM). "
-        "La doc pypixelcolor: un slot avec data corrompue peut brick/bootloop. "
-        "N'utilise un slot qu'après un envoi OK sans slot.",
-    )
-    parser.add_argument(
-        "--wipe-slot",
-        type=int,
-        default=1,
-        metavar="N",
-        help="Efface ce slot à la connexion (défaut: 1, là où le GIF cassé a été sauvé). 0 = ne rien effacer.",
-    )
-    parser.add_argument(
-        "--static",
-        action="store_true",
-        help="PNG fixe, sans animation. Défaut: GIF court (reflet) en live, sans slot ROM.",
-    )
-    parser.add_argument(
-        "--preview",
-        action="store_true",
-        help="Génère une simu LED dans assets/preview/ sans Bluetooth.",
-    )
-    parser.add_argument(
-        "--preview-dir",
-        default=None,
-        help="Dossier des PNG/GIF de preview (défaut: assets/preview).",
-    )
-    parser.add_argument(
-        "--preview-count",
-        default="1093",
-        help="Nombre affiché en mode --preview (défaut: 1093).",
-    )
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Affiche une seule fois puis quitte (le texte reste si --save-slot >= 1).",
-    )
-    parser.add_argument(
-        "--print-count",
-        action="store_true",
-        help="Affiche le nombre d'abonnés dans le terminal, sans Bluetooth.",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        default=os.environ.get("YOUTUBE_DEBUG", "").lower() in {"1", "true", "yes"},
-        help="Logs détaillés sur stderr (HTTP, session Studio, extraction). Ou variable YOUTUBE_DEBUG=1.",
-    )
-    return parser.parse_args()
+    print(f"{channel_name} {count_text}")
+    print(f"Simu 32x32: {native_path}")
+    print(f"Simu LED:   {led_path}")
+    print(f"Ouvre le GIF: {gif_path}")
+    return 0
 
 
-def main() -> int:
-    args = parse_args()
-    set_debug(args.debug)
-    debug(
-        f"start source={args.source} channel={args.channel} cookies={args.cookies} "
-        f"print_count={args.print_count} once={args.once} brightness={args.brightness}"
+@click.command(
+    name="ipixel-youtube",
+    context_settings={"help_option_names": ["-h", "--help"], "show_default": True},
+)
+@click.option(
+    "--address",
+    envvar="IPIXEL_ADDRESS",
+    default="00000000-0000-0000-0000-000000000000",
+    show_envvar=True,
+    help="Adresse Bluetooth du panneau. Trouve-la avec: python -m pypixelcolor --scan",
+)
+@click.option(
+    "--channel",
+    envvar=["YOUTUBE_CHANNEL", "YOUTUBE_CHANNEL_ID"],
+    default="@example",
+    show_envvar=True,
+    help="ID de chaîne (UCxxxx) ou handle (@maChaine).",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["studio", "live", "official"], case_sensitive=True),
+    default="studio",
+    help="studio = chiffre exact YouTube Studio (cookies du propriétaire). "
+    "live = estimation Mixerno/SocialCounts. "
+    "official = YouTube Data API arrondie (--api-key).",
+)
+@click.option(
+    "--cookies",
+    envvar="YOUTUBE_COOKIES",
+    default="cookies.txt",
+    show_envvar=True,
+    help="Fichier cookies Netscape (session YouTube Studio).",
+)
+@click.option(
+    "--api-key",
+    envvar="YOUTUBE_API_KEY",
+    default=None,
+    show_envvar=True,
+    help="Clé API YouTube Data v3, seulement pour --source official.",
+)
+@click.option(
+    "--interval",
+    type=int,
+    default=15,
+    help="Secondes entre deux requêtes.",
+)
+@click.option(
+    "--color",
+    default=None,
+    help="Override couleur accent hex. Défaut: palette RYXACORE (bleu/violet/cyan).",
+)
+@click.option(
+    "--brightness",
+    type=int,
+    metavar="0-100",
+    envvar="IPIXEL_BRIGHTNESS",
+    default=DEFAULT_BRIGHTNESS,
+    show_envvar=True,
+    help="Luminosité du panneau 0-100 (réglage matériel, ignoré par --preview).",
+)
+@click.option(
+    "--font",
+    default="CUSONG",
+    help="Police: CUSONG, SIMSUN ou VCR_OSD_MONO (plus lisible en 32x32).",
+)
+@click.option(
+    "--name",
+    envvar="YOUTUBE_CHANNEL_NAME",
+    default=None,
+    show_envvar=True,
+    help="Nom affiché en haut du panneau. Par défaut: le vrai nom YouTube (RYXACORE).",
+)
+@click.option(
+    "--save-slot",
+    type=int,
+    default=0,
+    help="Slot 1-10 pour sauver en ROM. 0 = affichage live, pas de ROM. "
+    "La doc pypixelcolor: un slot avec data corrompue peut brick/bootloop. "
+    "N'utilise un slot qu'après un envoi OK sans slot.",
+)
+@click.option(
+    "--wipe-slot",
+    type=int,
+    metavar="N",
+    default=1,
+    help="Efface ce slot à la connexion (là où le GIF cassé a été sauvé). 0 = ne rien effacer.",
+)
+@click.option(
+    "--static",
+    is_flag=True,
+    help="PNG fixe, sans animation. Défaut: GIF court (reflet) en live, sans slot ROM.",
+)
+@click.option(
+    "--preview",
+    is_flag=True,
+    help="Génère une simu LED dans assets/preview/ sans Bluetooth. "
+    "Utilise le compteur de --channel/--source, sauf si --preview-count est fourni.",
+)
+@click.option(
+    "--preview-dir",
+    default=None,
+    help="Dossier des PNG/GIF de preview (défaut: assets/preview).",
+)
+@click.option(
+    "--preview-count",
+    default=None,
+    help="Force un nombre en --preview au lieu de récupérer le vrai compteur.",
+)
+@click.option(
+    "--once",
+    is_flag=True,
+    help="Affiche une seule fois puis quitte (le texte reste si --save-slot >= 1).",
+)
+@click.option(
+    "--print-count",
+    is_flag=True,
+    help="Affiche le nombre d'abonnés dans le terminal, sans Bluetooth.",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    envvar="YOUTUBE_DEBUG",
+    show_envvar=True,
+    help="Logs détaillés sur stderr (HTTP, session Studio, extraction).",
+)
+def main(
+    address: str,
+    channel: str,
+    source: str,
+    cookies: str,
+    api_key: str | None,
+    interval: int,
+    color: str | None,
+    brightness: int,
+    font: str,
+    name: str | None,
+    save_slot: int,
+    wipe_slot: int,
+    static: bool,
+    preview: bool,
+    preview_dir: str | None,
+    preview_count: str | None,
+    once: bool,
+    print_count: bool,
+    debug: bool,
+) -> int:
+    """Affiche le nombre d'abonnés YouTube en live sur un iPixel Color."""
+    set_debug(debug)
+    log_debug(
+        f"start source={source} channel={channel} cookies={cookies} "
+        f"print_count={print_count} once={once} brightness={brightness}"
     )
 
     try:
-        brightness = clamp_brightness(args.brightness)
+        brightness = clamp_brightness(brightness)
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 2
 
-    if args.preview:
-        channel_name = args.name or "RYXACORE"
-        preview_count = args.preview_count
-        if preview_count.isdigit():
-            preview_count = format_count(int(preview_count))
-        native_path, led_path, gif_path = write_preview(
-            channel_name,
-            preview_count,
-            args.font,
-            args.color,
-            args.preview_dir,
-            brightness,
-        )
-        print(f"Simu 32x32: {native_path}")
-        print(f"Simu LED:   {led_path}")
-        print(f"Ouvre le GIF: {gif_path}")
-        return 0
+    forced_count: str | None = None
+    if preview_count is not None:
+        forced_count = format_count(int(preview_count)) if preview_count.isdigit() else preview_count
+    elif preview and source == "studio" and not Path(cookies).is_file():
+        return _save_preview(name or "RYXACORE", format_count(1093), font, color, preview_dir)
 
     missing = []
-    api_key = args.api_key
-    if not args.channel:
+    if not channel:
         missing.append("--channel ou YOUTUBE_CHANNEL")
-    if args.source == "official" and api_key is None:
+    if source == "official" and api_key is None:
         missing.append("--api-key ou YOUTUBE_API_KEY")
-    if args.source == "studio" and not Path(args.cookies).is_file():
-        missing.append(f"--cookies ({args.cookies} introuvable)")
+    if source == "studio" and not Path(cookies).is_file():
+        missing.append(f"--cookies ({cookies} introuvable)")
     if missing:
         print("Paramètres manquants: " + ", ".join(missing), file=sys.stderr)
-        if args.source == "studio":
+        if source == "studio":
             print("\n" + COOKIE_HELP, file=sys.stderr)
         else:
             print(
@@ -192,34 +225,37 @@ def main() -> int:
         return 2
 
     try:
-        channel_id = resolve_channel_id(args.channel)
+        channel_id = resolve_channel_id(channel)
     except (urllib.error.URLError, RuntimeError) as exc:
         print(f"Impossible de résoudre la chaîne: {exc}", file=sys.stderr)
         return 1
 
-    channel_name = args.name
+    channel_name = name
     if not channel_name:
         try:
             channel_name = fetch_channel_name(channel_id)
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as exc:
             print(f"Nom de chaîne indisponible ({exc}), fallback handle.", file=sys.stderr)
     if not channel_name:
-        channel_name = args.channel.lstrip("@")
+        channel_name = channel.lstrip("@")
 
     print(f"Chaîne: {channel_name} ({channel_id})")
-    if args.source == "studio":
-        print(f"Source: YouTube Studio (cookies {args.cookies})")
-    elif args.source == "live":
+    if source == "studio":
+        print(f"Source: YouTube Studio (cookies {cookies})")
+    elif source == "live":
         print("Source: estimation publique (pas le chiffre Studio).")
 
-    if args.print_count:
+    if preview and forced_count is not None:
+        return _save_preview(channel_name, forced_count, font, color, preview_dir)
+
+    if preview or print_count:
         try:
             count = fetch_count(
-                args.source,
-                channel=args.channel,
+                source,
+                channel=channel,
                 channel_id=channel_id,
                 api_key=api_key,
-                cookies_path=args.cookies,
+                cookies_path=cookies,
             )
         except urllib.error.HTTPError as exc:
             print(f"Erreur HTTP {http_error_detail(exc)}", file=sys.stderr)
@@ -227,25 +263,30 @@ def main() -> int:
         except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
             print(f"Erreur: {exc}", file=sys.stderr)
             return 1
-        print(f"{channel_name} {format_count(count)}")
-        return 0
+        count_text = format_count(count)
+        if print_count:
+            print(f"{channel_name} {count_text}")
+            if not preview:
+                return 0
+        if preview:
+            return _save_preview(channel_name, count_text, font, color, preview_dir)
 
     device: pypixelcolor.Client | None = None
     last_count: int | None = None
     last_error: str | None = None
-    min_interval = 15 if args.source == "studio" else 5 if args.source == "live" else 10
+    min_interval = 15 if source == "studio" else 5 if source == "live" else 10
 
     try:
-        device = connect_device(args.address, wipe_slot=args.wipe_slot, brightness=brightness)
+        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness)
 
         while True:
             try:
                 count = fetch_count(
-                    args.source,
-                    channel=args.channel,
+                    source,
+                    channel=channel,
                     channel_id=channel_id,
                     api_key=api_key,
-                    cookies_path=args.cookies,
+                    cookies_path=cookies,
                 )
             except urllib.error.HTTPError as exc:
                 if last_count is not None:
@@ -277,31 +318,31 @@ def main() -> int:
                             device,
                             channel_name,
                             count_text,
-                            color=args.color,
-                            font=args.font,
-                            save_slot=args.save_slot,
-                            animate=not args.static,
+                            color=color,
+                            font=font,
+                            save_slot=save_slot,
+                            animate=not static,
                         )
                     except BLE_ERRORS as exc:
                         print(f"Bluetooth perdu ({exc}), reconnexion...", file=sys.stderr)
                         disconnect_device(device)
-                        device = connect_device(args.address, wipe_slot=args.wipe_slot, brightness=brightness)
+                        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness)
                         display_count(
                             device,
                             channel_name,
                             count_text,
-                            color=args.color,
-                            font=args.font,
-                            save_slot=args.save_slot,
-                            animate=not args.static,
+                            color=color,
+                            font=font,
+                            save_slot=save_slot,
+                            animate=not static,
                         )
                     last_count = count
                 else:
                     print(f"{time.strftime('%H:%M:%S')}  inchangé ({count})")
 
-            if args.once:
+            if once:
                 break
-            time.sleep(max(args.interval, min_interval))
+            time.sleep(max(interval, min_interval))
 
     except KeyboardInterrupt:
         print("\nArrêt.")

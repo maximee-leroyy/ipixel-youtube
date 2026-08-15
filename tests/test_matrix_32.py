@@ -14,6 +14,9 @@ def test_format_count_groups_thousands() -> None:
     assert format_count(1093) == "1.093"
     assert format_count(1902) == "1.902"
     assert format_count(12345) == "12.345"
+    assert format_count(999_999) == "999.999"
+    assert format_count(1_000_000) == "1000000"
+    assert format_count(20_201_148) == "20201148"
 
 
 def test_clamp_brightness() -> None:
@@ -111,6 +114,40 @@ def test_count_is_cyan_and_centered() -> None:
     assert abs(sum(cyan_x) / len(cyan_x) - 16) < 1.5
 
 
+def test_large_count_fits_32x32() -> None:
+    from ipixel.display.fonts import FONT_3X5, FONT_5X7, _fit_count, _text_pixel_size
+
+    text = format_count(20_201_148)
+    fitted, font, gap, separator_gap = _fit_count(text, 32)
+    assert fitted == "20201148"
+    assert font is FONT_3X5
+    width, height = _text_pixel_size(fitted, gap, font, separator_gap)
+    assert width <= 32
+    assert height == 5
+
+    small, small_font, small_gap, small_sep = _fit_count(format_count(1093), 32)
+    assert small == "1.093"
+    assert small_font is FONT_5X7
+    assert small_gap == 2
+    assert small_sep is None
+
+    png = render_matrix_png("SQUEEZIE", text, 32, 32, None, "CUSONG")
+    image = Image.open(BytesIO(png)).convert("RGB")
+    assert image.size == (32, 32)
+    cyan = (0, 245, 255)
+    xs: list[int] = []
+    for y in range(32):
+        for x in range(32):
+            pixel = image.getpixel((x, y))
+            if pixel == cyan and 4 <= y <= 27:
+                xs.append(x)
+    assert len(xs) >= 40
+    assert min(xs) >= 0
+    assert max(xs) <= 31
+    assert max(xs) - min(xs) >= 20
+    assert abs(sum(xs) / len(xs) - 16) < 2.5
+
+
 def test_preview_gif_is_large() -> None:
     from tempfile import TemporaryDirectory
 
@@ -157,6 +194,7 @@ if __name__ == "__main__":
     test_youtube_logo_has_red_and_play()
     test_hud_corners_are_present()
     test_count_is_cyan_and_centered()
+    test_large_count_fits_32x32()
     test_idle_gif_has_glass_sheen()
     test_preview_gif_is_large()
     test_brand_logo_files_exist()

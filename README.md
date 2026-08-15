@@ -16,7 +16,7 @@ assets/
   youtube.png            # fallback raster
   preview/               # PNG/GIF générés (--preview)
 src/ipixel/
-  cli.py                 # argparse + boucle live
+  cli.py                 # Click + boucle live
   youtube/               # cookies, Studio, APIs publiques
   display/               # polices bitmap, logo pyxelate, GIF, BLE
 tests/

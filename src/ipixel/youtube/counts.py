@@ -13,7 +13,9 @@ from ipixel.youtube.studio import fetch_studio_count
 
 
 def format_count(count: int) -> str:
-    """Thousands separator for the panel and the terminal (1.902)."""
+    """Thousands separators below 1 million (1.902). No dots at 1.000.000+."""
+    if count >= 1_000_000:
+        return str(count)
     return f"{count:,}".replace(",", ".")
 
 
