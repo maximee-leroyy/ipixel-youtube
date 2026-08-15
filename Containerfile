@@ -18,8 +18,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
+ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=0
 
 COPY pyproject.toml uv.lock README.md ./
