@@ -4,7 +4,7 @@ Live YouTube subscriber counter for iPixel Color 32×32 LED matrices.
 
 Compteur d’abonnés YouTube en live pour une matrice LED **iPixel Color 32×32**.
 
-Le script récupère le nombre d’abonnés de [RYXACORE](https://www.youtube.com/@example), pixelise le vrai logo YouTube (SVG) avec [pyxelate](https://github.com/sedthh/pyxelate), compose le 32×32, et l’envoie au panneau via Bluetooth avec [pypixelcolor](https://lucagoc.fr/pypixelcolor/main/).
+Le script récupère le nombre d’abonnés d’une chaîne YouTube, pixelise le logo (SVG) avec [pyxelate](https://github.com/sedthh/pyxelate), compose le 32×32, et l’envoie au panneau via Bluetooth avec [pypixelcolor](https://lucagoc.fr/pypixelcolor/main/).
 
 ## Architecture
 
@@ -143,12 +143,12 @@ pytest tests/test_matrix_32.py
 
 | Option | Défaut | Rôle |
 | --- | --- | --- |
-| `--channel` | `@example` | Handle ou ID `UC…` |
+| `--channel` | *(requis)* | Handle ou ID `UC…` (`YOUTUBE_CHANNEL`) |
 | `--address` | *(requis)* | Adresse Bluetooth (`IPIXEL_ADDRESS`) |
 | `--interval` | `15` | Secondes entre deux mises à jour |
 | `--name` | nom YouTube | Texte en haut du panneau |
 | `--brightness` | `100` | Luminosité globale du panneau 0–100 (`IPIXEL_BRIGHTNESS`) |
-| `--color` | cyan RYXACORE | Accent hex, ex. `00d4ff` |
+| `--color` | cyan | Accent hex, ex. `00d4ff` |
 | `--save-slot` | `0` | Slot 1–10 en ROM ; `0` = affichage live. Ne pas sauver un GIF. |
 | `--wipe-slot` | `1` | Efface ce slot à la connexion (`0` = ne rien effacer). |
 | `--static` | | PNG fixe, sans animation. |

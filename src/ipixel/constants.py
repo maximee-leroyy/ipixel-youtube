@@ -35,7 +35,7 @@ COOKIE_HELP = """\
 Le chiffre exact (YouTube Studio → Abonnés actuels) n'est pas public.
 Il faut la session du propriétaire de la chaîne.
 
-1. Connecte-toi à https://studio.youtube.com avec le compte RYXACORE
+1. Connecte-toi à https://studio.youtube.com avec le compte de la chaîne
 2. Exporte les cookies (extension Chrome « Get cookies.txt LOCALLY »)
 3. Enregistre le fichier cookies.txt à la racine du projet
 4. Relance : ipixel-youtube --cookies cookies.txt

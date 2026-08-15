@@ -25,7 +25,7 @@ services:
     environment:
       IPIXEL_ADDRESS: ${IPIXEL_ADDRESS:-}
       IPIXEL_BRIGHTNESS: ${IPIXEL_BRIGHTNESS:-1}
-      YOUTUBE_CHANNEL: ${YOUTUBE_CHANNEL:-@example}
+      YOUTUBE_CHANNEL: ${YOUTUBE_CHANNEL:-}
       YOUTUBE_COOKIES: /app/cookies.txt
       YOUTUBE_DEBUG: ${YOUTUBE_DEBUG:-}
       HOST_DBUS_SOCKET: /host/dbus/system_bus_socket

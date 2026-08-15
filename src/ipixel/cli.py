@@ -100,7 +100,7 @@ def _run_drawing(
 @click.option(
     "--channel",
     envvar=["YOUTUBE_CHANNEL", "YOUTUBE_CHANNEL_ID"],
-    default="@example",
+    default=None,
     show_envvar=True,
     help="ID de chaîne (UCxxxx) ou handle (@maChaine).",
 )
@@ -135,7 +135,7 @@ def _run_drawing(
 @click.option(
     "--color",
     default=None,
-    help="Override couleur accent hex. Défaut: palette RYXACORE (bleu/violet/cyan).",
+    help="Override couleur accent hex. Défaut: cyan.",
 )
 @click.option(
     "--brightness",
@@ -156,7 +156,7 @@ def _run_drawing(
     envvar="YOUTUBE_CHANNEL_NAME",
     default=None,
     show_envvar=True,
-    help="Nom affiché en haut du panneau. Par défaut: le vrai nom YouTube (RYXACORE).",
+    help="Nom affiché en haut du panneau. Par défaut: le vrai nom YouTube.",
 )
 @click.option(
     "--save-slot",
@@ -221,7 +221,7 @@ def _run_drawing(
 )
 def main(
     address: str | None,
-    channel: str,
+    channel: str | None,
     source: str,
     cookies: str,
     api_key: str | None,
@@ -273,7 +273,7 @@ def main(
     if preview_count is not None:
         forced_count = format_panel_count(int(preview_count)) if preview_count.isdigit() else preview_count
     elif preview and source == "studio" and not Path(cookies).is_file():
-        return _save_preview(name or "RYXACORE", format_count(1093), font, color, preview_dir)
+        return _save_preview(name or "CHANNEL", format_count(1093), font, color, preview_dir)
 
     missing = []
     if not channel:
@@ -295,6 +295,7 @@ def main(
             )
         return 2
 
+    assert channel is not None
     try:
         channel_id = resolve_channel_id(channel)
     except (urllib.error.URLError, RuntimeError) as exc:
