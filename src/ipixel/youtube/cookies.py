@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import http.cookiejar
 import time
@@ -182,7 +183,15 @@ class CookieStore:
         path = Path(self.path)
         tmp = path.with_name(path.name + ".tmp")
         self.jar.save(filename=str(tmp), ignore_discard=True, ignore_expires=True)
-        tmp.replace(path)
+        try:
+            tmp.replace(path)
+        except OSError as exc:
+            # Bind-mount d'un fichier (Docker/nerdctl) : rename vers le mountpoint = EBUSY.
+            if exc.errno not in (errno.EBUSY, errno.EXDEV):
+                tmp.unlink(missing_ok=True)
+                raise
+            path.write_bytes(tmp.read_bytes())
+            tmp.unlink(missing_ok=True)
         self._saved_mtime = path.stat().st_mtime
 
 

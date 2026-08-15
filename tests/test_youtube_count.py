@@ -1,5 +1,6 @@
 """Unit tests for Studio subscriber parsing."""
 
+import errno
 from pathlib import Path
 
 from ipixel.youtube.cookies import (
@@ -179,6 +180,26 @@ def test_cookie_store_writes_set_cookie(tmp_path: Path) -> None:
     reloaded = CookieStore(str(cookie_file)).as_dict()
     assert reloaded["SAPISID"] == "secret123"
     assert reloaded["__Secure-3PSIDTS"] == "rotated-token"
+
+
+def test_cookie_store_save_bind_mount_busy(tmp_path: Path, monkeypatch) -> None:
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text(
+        "# Netscape HTTP Cookie File\n.youtube.com	TRUE	/	TRUE	0	SAPISID	secret123\n",
+        encoding="utf-8",
+    )
+    store = CookieStore(str(cookie_file))
+    original_replace = Path.replace
+
+    def busy_replace(self: Path, target: Path | str) -> Path:
+        if self.name.endswith(".tmp"):
+            raise OSError(errno.EBUSY, "Device or resource busy")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", busy_replace)
+    store.save()
+    assert "SAPISID" in cookie_file.read_text(encoding="utf-8")
+    assert not cookie_file.with_name("cookies.txt.tmp").exists()
 
 
 def test_netscape_cookies(tmp_path: Path) -> None:
