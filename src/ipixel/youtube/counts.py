@@ -19,6 +19,17 @@ def format_count(count: int) -> str:
     return f"{count:,}".replace(",", ".")
 
 
+def format_panel_count(count: int) -> str:
+    """Compact enough for 32×32: 5×7 below 1M, digits to 8 figures, then 513.3M."""
+    if count >= 1_000_000_000:
+        text = f"{count / 1_000_000_000:.1f}".rstrip("0").rstrip(".")
+        return f"{text}B"
+    if count >= 100_000_000:
+        text = f"{count / 1_000_000:.1f}".rstrip("0").rstrip(".")
+        return f"{text}M"
+    return format_count(count)
+
+
 def fetch_live_count(channel_id: str) -> int:
     """Same approach as public live counters: Mixerno, then SocialCounts."""
     errors: list[str] = []

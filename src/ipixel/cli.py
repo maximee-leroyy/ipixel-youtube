@@ -16,7 +16,7 @@ from ipixel.debug import set_debug
 from ipixel.display.device import clamp_brightness, connect_device, disconnect_device, display_count
 from ipixel.display.render import write_preview
 from ipixel.youtube.channel import fetch_channel_name, resolve_channel_id
-from ipixel.youtube.counts import fetch_count, format_count
+from ipixel.youtube.counts import fetch_count, format_count, format_panel_count
 from ipixel.youtube.http import http_error_detail
 
 
@@ -202,7 +202,7 @@ def main(
 
     forced_count: str | None = None
     if preview_count is not None:
-        forced_count = format_count(int(preview_count)) if preview_count.isdigit() else preview_count
+        forced_count = format_panel_count(int(preview_count)) if preview_count.isdigit() else preview_count
     elif preview and source == "studio" and not Path(cookies).is_file():
         return _save_preview(name or "RYXACORE", format_count(1093), font, color, preview_dir)
 
@@ -263,13 +263,14 @@ def main(
         except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
             print(f"Erreur: {exc}", file=sys.stderr)
             return 1
-        count_text = format_count(count)
+        exact = format_count(count)
+        panel = format_panel_count(count)
         if print_count:
-            print(f"{channel_name} {count_text}")
+            print(f"{channel_name} {exact}")
             if not preview:
                 return 0
         if preview:
-            return _save_preview(channel_name, count_text, font, color, preview_dir)
+            return _save_preview(channel_name, panel, font, color, preview_dir)
 
     device: pypixelcolor.Client | None = None
     last_count: int | None = None
@@ -311,7 +312,7 @@ def main(
             else:
                 last_error = None
                 if count != last_count:
-                    count_text = format_count(count)
+                    count_text = format_panel_count(count)
                     print(f"{time.strftime('%H:%M:%S')}  {channel_name} {format_count(count)}")
                     try:
                         display_count(

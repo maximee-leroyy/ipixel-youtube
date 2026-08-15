@@ -6,7 +6,7 @@ from PIL import Image
 
 from ipixel.display.device import clamp_brightness
 from ipixel.display.render import apply_brightness, render_matrix_gif, render_matrix_png, write_preview
-from ipixel.youtube.counts import format_count
+from ipixel.youtube.counts import format_count, format_panel_count
 
 
 def test_format_count_groups_thousands() -> None:
@@ -17,6 +17,15 @@ def test_format_count_groups_thousands() -> None:
     assert format_count(999_999) == "999.999"
     assert format_count(1_000_000) == "1000000"
     assert format_count(20_201_148) == "20201148"
+
+
+def test_format_panel_count_compacts_huge_channels() -> None:
+    assert format_panel_count(1093) == "1.093"
+    assert format_panel_count(20_201_148) == "20201148"
+    assert format_panel_count(99_999_999) == "99999999"
+    assert format_panel_count(100_000_000) == "100M"
+    assert format_panel_count(513_297_760) == "513.3M"
+    assert format_panel_count(1_000_000_000) == "1B"
 
 
 def test_clamp_brightness() -> None:
@@ -130,6 +139,15 @@ def test_large_count_fits_32x32() -> None:
     assert small_font is FONT_5X7
     assert small_gap == 2
     assert small_sep is None
+
+    huge = format_panel_count(513_297_760)
+    assert huge == "513.3M"
+    fitted_huge, font_huge, gap_huge, sep_huge = _fit_count(huge, 32)
+    assert fitted_huge == "513.3M"
+    assert font_huge is FONT_5X7
+    width_huge, height_huge = _text_pixel_size(fitted_huge, gap_huge, font_huge, sep_huge)
+    assert width_huge <= 32
+    assert height_huge == 7
 
     png = render_matrix_png("SQUEEZIE", text, 32, 32, None, "CUSONG")
     image = Image.open(BytesIO(png)).convert("RGB")
