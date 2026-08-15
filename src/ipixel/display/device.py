@@ -8,6 +8,7 @@ import pypixelcolor
 
 from ipixel.constants import BLE_ERRORS, DEFAULT_BRIGHTNESS, SHEEN_FRAME_MS, SHEEN_FRAMES
 from ipixel.debug import debug
+from ipixel.display.drawing import drawing_gif, drawing_png, load_drawing
 from ipixel.display.render import render_matrix_gif, render_matrix_png
 
 
@@ -87,3 +88,30 @@ def display_count(
     debug(f"BLE send_png {info.width}x{info.height} slot={save_slot} text={count_text}")
     if save_slot >= 1:
         device.show_slot(save_slot)
+
+
+def display_drawing(
+    device: pypixelcolor.Client,
+    path: str,
+    *,
+    save_slot: int,
+    static: bool,
+) -> None:
+    info = device.get_device_info()
+    frames, durations = load_drawing(path, info.width, info.height)
+    animated = len(frames) > 1 and not static
+    if animated:
+        if save_slot >= 1:
+            print("GIF: --save-slot ignoré (un GIF en ROM peut brick le panneau).")
+            save_slot = 0
+        payload = drawing_gif(frames, durations)
+        device.send_image_hex(payload.hex(), ".gif", resize_method="crop", save_slot=0)
+        print(f"GIF {len(frames)} frames ({len(payload)} octets) depuis {path}")
+        debug(f"BLE send_drawing_gif {info.width}x{info.height} frames={len(frames)}")
+        return
+    payload = drawing_png(frames)
+    device.send_image_hex(payload.hex(), ".png", resize_method="crop", save_slot=save_slot)
+    debug(f"BLE send_drawing_png {info.width}x{info.height} slot={save_slot}")
+    if save_slot >= 1:
+        device.show_slot(save_slot)
+    print(f"PNG 32x32 depuis {path}")

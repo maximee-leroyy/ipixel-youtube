@@ -76,7 +76,23 @@ ipixel-youtube --print-count
 
 Le panneau affiche le nom, le nombre d’abonnés en cyan, et un **reflet** en boucle (GIF court, sans ROM). Ctrl+C arrête le live. `--static` envoie un PNG fixe. N’utilise `--save-slot 1` qu’avec `--static`, après un affichage correct.
 
-Autre chaîne ou autre panneau :
+## Afficher un dessin (sans HUD YouTube)
+
+À la place de l’icône YouTube + compteur + nom de chaîne, tu peux envoyer n’importe quel PNG, JPEG ou GIF. L’image est recadrée/redimensionnée en **32×32** (nearest-neighbor, centré sur fond noir — idéal pour du pixel art).
+
+Prépare un PNG 32×32 (Aseprite, Piskel, Photoshop…) puis :
+
+```bash
+# Simu LED sans Bluetooth
+ipixel-youtube --image dessin.png --preview
+
+# Envoi au panneau
+ipixel-youtube --image dessin.png --address "00000000-0000-0000-0000-000000000000"
+```
+
+Un GIF animé est envoyé tel quel (boucle). `--static` n’envoie que la première frame en PNG.
+
+## Autre chaîne ou autre panneau
 
 ```bash
 ipixel-youtube --channel @taChaine --address 00000000-0000-0000-0000-000000000000
@@ -110,6 +126,7 @@ pytest tests/test_matrix_32.py
 | `--save-slot` | `0` | Slot 1–10 en ROM ; `0` = affichage live. Ne pas sauver un GIF. |
 | `--wipe-slot` | `1` | Efface ce slot à la connexion (`0` = ne rien effacer). |
 | `--static` | | PNG fixe, sans animation. |
+| `--image` | | PNG/GIF/JPEG à la place du HUD YouTube (32×32). |
 | `--source studio` | `studio` | Chiffre exact YouTube Studio (`--cookies`) |
 | `--cookies` | `cookies.txt` | Session Netscape du propriétaire |
 | `--source live` | | Estimation type compteurs publics |

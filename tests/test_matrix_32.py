@@ -166,6 +166,37 @@ def test_large_count_fits_32x32() -> None:
     assert abs(sum(xs) / len(xs) - 16) < 2.5
 
 
+def test_load_drawing_fits_32x32(tmp_path) -> None:
+    from ipixel.display.drawing import load_drawing
+
+    source = Image.new("RGB", (8, 4), (255, 0, 0))
+    path = tmp_path / "red.png"
+    source.save(path)
+    frames, durations = load_drawing(path, 32, 32)
+    assert len(frames) == 1
+    assert durations[0] >= 20
+    image = frames[0]
+    assert image.size == (32, 32)
+    assert image.getpixel((16, 16)) == (255, 0, 0)
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+
+
+def test_drawing_preview_writes_files(tmp_path) -> None:
+    from ipixel.display.drawing import write_drawing_preview
+
+    source = Image.new("RGB", (32, 32), (0, 255, 0))
+    path = tmp_path / "green.png"
+    source.save(path)
+    native_path, led_path, gif_path = write_drawing_preview(path, tmp_path)
+    native = Image.open(native_path)
+    led = Image.open(led_path)
+    assert native.size == (32, 32)
+    assert native.getpixel((0, 0)) == (0, 255, 0)
+    assert min(led.size) >= 400
+    gif = Image.open(gif_path)
+    assert gif.format == "GIF"
+
+
 def test_preview_gif_is_large() -> None:
     from tempfile import TemporaryDirectory
 

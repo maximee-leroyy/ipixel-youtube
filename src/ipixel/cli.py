@@ -13,7 +13,8 @@ import pypixelcolor
 from ipixel.constants import BLE_ERRORS, COOKIE_HELP, DEFAULT_BRIGHTNESS
 from ipixel.debug import debug as log_debug
 from ipixel.debug import set_debug
-from ipixel.display.device import clamp_brightness, connect_device, disconnect_device, display_count
+from ipixel.display.device import clamp_brightness, connect_device, disconnect_device, display_count, display_drawing
+from ipixel.display.drawing import load_drawing, write_drawing_preview
 from ipixel.display.render import write_preview
 from ipixel.youtube.channel import fetch_channel_name, resolve_channel_id
 from ipixel.youtube.counts import fetch_count, format_count, format_panel_count
@@ -38,6 +39,50 @@ def _save_preview(
     print(f"Simu 32x32: {native_path}")
     print(f"Simu LED:   {led_path}")
     print(f"Ouvre le GIF: {gif_path}")
+    return 0
+
+
+def _run_drawing(
+    image_path: str,
+    *,
+    address: str,
+    brightness: int,
+    save_slot: int,
+    wipe_slot: int,
+    static: bool,
+    preview: bool,
+    preview_dir: str | None,
+) -> int:
+    if preview:
+        try:
+            native_path, led_path, gif_path = write_drawing_preview(image_path, preview_dir)
+        except (OSError, ValueError) as exc:
+            print(f"Dessin illisible: {exc}", file=sys.stderr)
+            return 2
+        print(f"Dessin: {image_path}")
+        print(f"Simu 32x32: {native_path}")
+        print(f"Simu LED:   {led_path}")
+        print(f"Ouvre le GIF: {gif_path}")
+        return 0
+
+    try:
+        load_drawing(image_path)
+    except (OSError, ValueError) as exc:
+        print(f"Dessin illisible: {exc}", file=sys.stderr)
+        return 2
+
+    device: pypixelcolor.Client | None = None
+    try:
+        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness)
+        display_drawing(device, image_path, save_slot=save_slot, static=static)
+    except KeyboardInterrupt:
+        print("\nArrêt.")
+    except BLE_ERRORS as exc:
+        print(f"Bluetooth: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if device is not None:
+            disconnect_device(device)
     return 0
 
 
@@ -134,10 +179,18 @@ def _save_preview(
     help="PNG fixe, sans animation. Défaut: GIF court (reflet) en live, sans slot ROM.",
 )
 @click.option(
+    "--image",
+    "image_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    default=None,
+    help="PNG/GIF/JPEG à afficher à la place du HUD YouTube. Redimensionné en 32×32.",
+)
+@click.option(
     "--preview",
     is_flag=True,
     help="Génère une simu LED dans assets/preview/ sans Bluetooth. "
-    "Utilise le compteur de --channel/--source, sauf si --preview-count est fourni.",
+    "Avec --image: simule le dessin. Sinon: utilise le compteur de --channel/--source, "
+    "sauf si --preview-count est fourni.",
 )
 @click.option(
     "--preview-dir",
@@ -180,6 +233,7 @@ def main(
     save_slot: int,
     wipe_slot: int,
     static: bool,
+    image_path: str | None,
     preview: bool,
     preview_dir: str | None,
     preview_count: str | None,
@@ -191,7 +245,7 @@ def main(
     set_debug(debug)
     log_debug(
         f"start source={source} channel={channel} cookies={cookies} "
-        f"print_count={print_count} once={once} brightness={brightness}"
+        f"image={image_path} print_count={print_count} once={once} brightness={brightness}"
     )
 
     try:
@@ -199,6 +253,18 @@ def main(
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 2
+
+    if image_path:
+        return _run_drawing(
+            image_path,
+            address=address,
+            brightness=brightness,
+            save_slot=save_slot,
+            wipe_slot=wipe_slot,
+            static=static,
+            preview=preview,
+            preview_dir=preview_dir,
+        )
 
     forced_count: str | None = None
     if preview_count is not None:
