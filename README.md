@@ -153,7 +153,7 @@ pytest tests/test_matrix_32.py
 | `--wipe-slot` | `1` | Efface ce slot à la connexion (`0` = ne rien effacer). |
 | `--static` | | PNG fixe, sans animation. |
 | `--image` | | PNG/GIF/JPEG à la place du HUD YouTube (32×32). |
-| `--source studio` | `studio` | Chiffre exact YouTube Studio (`--cookies`) |
+| `--source studio` | `studio` | Chiffre exact YouTube Studio (`--cookies`, `YOUTUBE_SOURCE`) |
 | `--cookies` | `cookies.txt` | Session Netscape du propriétaire |
 | `--source live` | | Estimation type compteurs publics |
 | `--source official` | | YouTube Data API (arrondi, `--api-key` requis) |
@@ -162,7 +162,7 @@ pytest tests/test_matrix_32.py
 | `--preview` | | Simu 32×32 sans Bluetooth, fichiers dans `assets/preview/` |
 | `--preview-dir` | `assets/preview` | Dossier des PNG/GIF générés |
 
-Variables d’environnement équivalentes : `IPIXEL_ADDRESS`, `IPIXEL_BRIGHTNESS`, `YOUTUBE_CHANNEL`, `YOUTUBE_CHANNEL_NAME`, `YOUTUBE_API_KEY`, `YOUTUBE_COOKIES`, `YOUTUBE_DEBUG`.
+Variables d’environnement équivalentes : `IPIXEL_ADDRESS`, `IPIXEL_BRIGHTNESS`, `YOUTUBE_CHANNEL`, `YOUTUBE_CHANNEL_NAME`, `YOUTUBE_SOURCE`, `YOUTUBE_API_KEY`, `YOUTUBE_COOKIES`, `YOUTUBE_DEBUG`.
 
 ## Compteur exact vs « live »
 

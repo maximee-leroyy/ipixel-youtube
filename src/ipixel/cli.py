@@ -106,8 +106,10 @@ def _run_drawing(
 )
 @click.option(
     "--source",
+    envvar="YOUTUBE_SOURCE",
     type=click.Choice(["studio", "live", "official"], case_sensitive=True),
     default="studio",
+    show_envvar=True,
     help="studio = chiffre exact YouTube Studio (cookies du propriétaire). "
     "live = estimation Mixerno/SocialCounts. "
     "official = YouTube Data API arrondie (--api-key).",

@@ -26,6 +26,7 @@ services:
       IPIXEL_ADDRESS: ${IPIXEL_ADDRESS:-}
       IPIXEL_BRIGHTNESS: ${IPIXEL_BRIGHTNESS:-1}
       YOUTUBE_CHANNEL: ${YOUTUBE_CHANNEL:-}
+      YOUTUBE_SOURCE: ${YOUTUBE_SOURCE:-studio}
       YOUTUBE_COOKIES: /app/cookies.txt
       YOUTUBE_DEBUG: ${YOUTUBE_DEBUG:-}
       HOST_DBUS_SOCKET: /host/dbus/system_bus_socket
