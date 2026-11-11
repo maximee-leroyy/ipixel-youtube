@@ -1,8 +1,19 @@
-"""Unified logging: one line format, ISO-8601 timestamps, per-instance tag.
+"""Unified logging: the one place that defines the log line format.
 
-    2026-11-11T14:03:22.123+01:00 INFO    [@myChannel] Connecté au panneau 32x32
+Every line looks like:
 
-The tag tells two containers apart in a merged `docker compose logs`.
+    2026-11-11T20:04:30.488+01:00 INFO    [@myChannel] Connected to panel AA:BB:CC:DD:EE:FF (32x32)
+
+- timestamp: ISO-8601, milliseconds, local offset (set TZ in the container)
+- level: padded to 7 characters so messages line up
+- tag: the channel (or the BLE address), so two containers can be told apart
+  in a merged `nerdctl compose logs`
+
+Multi-line messages (tracebacks, help text) are indented under their line.
+
+The container entrypoint logs through this module too:
+
+    python -m ipixel.log INFO "message"
 """
 
 from __future__ import annotations
@@ -12,8 +23,20 @@ import os
 import sys
 from datetime import datetime
 
-LOGGER_NAME = "ipixel"
-_TAG = os.environ.get("IPIXEL_LOG_TAG", "ipixel")
+LOG_FORMAT = "%(asctime)s %(levelname)-7s [%(tag)s] %(message)s"
+
+log = logging.getLogger("ipixel")
+_tag = "ipixel"
+
+
+def tag_for(channel: str | None, address: str | None) -> str:
+    """The instance tag: the channel, else the BLE address, else "ipixel"."""
+    return channel or address or "ipixel"
+
+
+def set_tag(tag: str) -> None:
+    global _tag
+    _tag = tag
 
 
 class _Formatter(logging.Formatter):
@@ -21,28 +44,33 @@ class _Formatter(logging.Formatter):
         return datetime.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds")
 
     def format(self, record: logging.LogRecord) -> str:
-        record.tag = _TAG
-        line = super().format(record)
-        # Une entrée = un bloc : les lignes de traceback sont indentées sous la même date.
-        return line.replace("\n", "\n    ")
+        record.tag = _tag
+        return super().format(record).replace("\n", "\n    ")
 
 
-def set_tag(tag: str) -> None:
-    """Set the per-instance tag, unless IPIXEL_LOG_TAG pins it."""
-    global _TAG
-    if "IPIXEL_LOG_TAG" not in os.environ and tag:
-        _TAG = tag
+def setup_logging(debug: bool) -> None:
+    """Send every logger (ours, pypixelcolor, bleak) to stderr in LOG_FORMAT.
 
-
-def setup_logging(debug: bool = False) -> None:
+    Without --debug, pypixelcolor and bleak only show warnings: pypixelcolor
+    logs every BLE command at INFO, which would flood the output.
+    """
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(_Formatter("%(asctime)s %(levelname)-7s [%(tag)s] %(message)s"))
+    handler.setFormatter(_Formatter(LOG_FORMAT))
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(logging.DEBUG if debug else logging.INFO)
-    # pypixelcolor log chaque commande en INFO, bleak est bavard : seulement en --debug.
-    for noisy in ("pypixelcolor", "bleak"):
-        logging.getLogger(noisy).setLevel(logging.DEBUG if debug else logging.WARNING)
+    for library in ("pypixelcolor", "bleak"):
+        logging.getLogger(library).setLevel(logging.DEBUG if debug else logging.WARNING)
 
 
-log = logging.getLogger(LOGGER_NAME)
+def main(argv: list[str]) -> int:
+    """`python -m ipixel.log LEVEL message...`: one log line, tag taken from the env."""
+    level, *words = argv
+    setup_logging(debug=False)
+    set_tag(tag_for(os.environ.get("YOUTUBE_CHANNEL"), os.environ.get("IPIXEL_ADDRESS")))
+    log.log(logging.getLevelNamesMapping()[level], " ".join(words))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

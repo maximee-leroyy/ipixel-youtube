@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 
 from ipixel.constants import MIXERNO_API, SOCIALCOUNTS_API, YOUTUBE_API
-from ipixel.debug import debug
+from ipixel.log import log
 from ipixel.youtube.channel import is_channel_id
 from ipixel.youtube.http import http_get_json
 from ipixel.youtube.studio import fetch_studio_count
@@ -40,14 +40,14 @@ def fetch_live_count(channel_id: str) -> int:
         estimation = counters.get("estimation") or {}
         if "subscriberCount" in estimation:
             count = int(estimation["subscriberCount"])
-            debug(f"SocialCounts estimation={count}")
+            log.debug(f"SocialCounts estimation={count}")
             return count
         if "est_sub" in payload:
             count = int(payload["est_sub"])
-            debug(f"SocialCounts est_sub={count}")
+            log.debug(f"SocialCounts est_sub={count}")
             return count
-        errors.append("SocialCounts: champ subscriberCount absent")
-        debug("SocialCounts: champ subscriberCount absent")
+        errors.append("SocialCounts: subscriberCount field missing")
+        log.debug("SocialCounts: subscriberCount field missing")
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:
         errors.append(f"SocialCounts: {exc}")
 
@@ -56,14 +56,14 @@ def fetch_live_count(channel_id: str) -> int:
         for item in payload.get("counts") or []:
             if item.get("value") == "subscribers":
                 count = int(item["count"])
-                debug(f"Mixerno subscribers={count}")
+                log.debug(f"Mixerno subscribers={count}")
                 return count
-        errors.append("Mixerno: champ subscribers absent")
-        debug("Mixerno: champ subscribers absent")
+        errors.append("Mixerno: subscribers field missing")
+        log.debug("Mixerno: subscribers field missing")
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:
         errors.append(f"Mixerno: {exc}")
 
-    raise RuntimeError("Compteurs live injoignables: " + " | ".join(errors))
+    raise RuntimeError("Live counters unreachable: " + " | ".join(errors))
 
 
 def fetch_official_count(api_key: str, channel: str) -> int:
@@ -80,17 +80,17 @@ def fetch_official_count(api_key: str, channel: str) -> int:
     payload = http_get_json(f"{YOUTUBE_API}?{urllib.parse.urlencode(params)}")
     items = payload.get("items") or []
     if not items:
-        raise RuntimeError(f"Chaîne introuvable: {channel!r}. Vérifie l'ID (UCxxxx) ou le handle (@nom).")
+        raise RuntimeError(f"Channel not found: {channel!r}. Check the ID (UCxxxx) or the handle (@name).")
 
     stats = items[0].get("statistics") or {}
     if stats.get("hiddenSubscriberCount"):
-        raise RuntimeError("Le nombre d'abonnés de cette chaîne est masqué.")
+        raise RuntimeError("This channel's subscriber count is hidden.")
 
     count = stats.get("subscriberCount")
     if count is None:
-        raise RuntimeError("L'API n'a pas renvoyé de subscriberCount.")
+        raise RuntimeError("The API did not return a subscriberCount.")
     official = int(count)
-    debug(f"official subscriberCount={official} hidden={stats.get('hiddenSubscriberCount')}")
+    log.debug(f"official subscriberCount={official} hidden={stats.get('hiddenSubscriberCount')}")
     return official
 
 
@@ -102,11 +102,11 @@ def fetch_count(
     api_key: str | None,
     cookies_path: str,
 ) -> int:
-    debug(f"fetch_count source={source} channel={channel} channel_id={channel_id}")
+    log.debug(f"fetch_count source={source} channel={channel} channel_id={channel_id}")
     if source == "studio":
         return fetch_studio_count(channel_id, cookies_path)
     if source == "official":
         if api_key is None:
-            raise RuntimeError("Clé API YouTube manquante.")
+            raise RuntimeError("YouTube API key missing.")
         return fetch_official_count(api_key, channel)
     return fetch_live_count(channel_id)

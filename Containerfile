@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 #
-# Image linux/amd64 + linux/arm64 (Pi 5), publiée sur
+# linux/amd64 + linux/arm64 (Pi 5) image, published to
 #   ghcr.io/maximee-leroyy/ipixel-youtube
 #   nerdctl pull ghcr.io/maximee-leroyy/ipixel-youtube:latest
 #
-# BlueZ tourne dans le container (ou on réutilise celui du Pi via D-Bus).
+# BlueZ runs in the container (or we reuse the Pi's one through D-Bus).
 
 ARG PYTHON_VERSION=3.13.7
 
@@ -23,12 +23,11 @@ ENV UV_LINK_MODE=copy \
 
 COPY pyproject.toml uv.lock README.md ./
 
-# Dépendances seulement : le wheel hatch force-include youtube.png (absent du repo).
+# Dependencies only: the project runs from /app/src (PYTHONPATH), not installed.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
-COPY assets ./assets
 
 FROM python:${PYTHON_VERSION}-slim-bookworm
 
@@ -48,7 +47,6 @@ WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
-COPY --from=builder /app/assets /app/assets
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
 COPY container/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -56,8 +54,7 @@ RUN chmod +x /entrypoint.sh
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    YOUTUBE_COOKIES=/app/cookies.txt
+    PYTHONDONTWRITEBYTECODE=1
 
 LABEL org.opencontainers.image.title="ipixel-youtube" \
       org.opencontainers.image.description="Live YouTube subscriber counter for iPixel Color 32×32" \

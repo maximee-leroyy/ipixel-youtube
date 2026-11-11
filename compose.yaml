@@ -1,12 +1,11 @@
-# Image Linux (amd64 + arm64) publiée sur GHCR à chaque push sur main.
+# Linux image (amd64 + arm64) published to GHCR on every push to main.
 #   nerdctl pull ghcr.io/maximee-leroyy/ipixel-youtube:latest
 #   nerdctl compose up -d
 #
-# Build local : nerdctl compose build
+# Local build: nerdctl compose build
 #
-# Plusieurs panneaux : un service par panneau (IPIXEL_ADDRESS différent), tous en
-# network_mode: host. Les connexions BLE sont sérialisées entre containers et la
-# connexion BlueZ laissée par un container tué est fermée au démarrage suivant.
+# Empty variables = CLI default value (single source: src/ipixel/cli.py).
+# Several panels: see "Several panels" in the README.
 
 name: ipixel
 
@@ -28,11 +27,9 @@ services:
       - ./cookies.txt:/app/cookies.txt
     environment:
       IPIXEL_ADDRESS: ${IPIXEL_ADDRESS:-}
-      IPIXEL_BRIGHTNESS: ${IPIXEL_BRIGHTNESS:-1}
+      IPIXEL_BRIGHTNESS: ${IPIXEL_BRIGHTNESS:-}
       YOUTUBE_CHANNEL: ${YOUTUBE_CHANNEL:-}
-      YOUTUBE_SOURCE: ${YOUTUBE_SOURCE:-studio}
-      YOUTUBE_COOKIES: /app/cookies.txt
+      YOUTUBE_SOURCE: ${YOUTUBE_SOURCE:-}
       YOUTUBE_DEBUG: ${YOUTUBE_DEBUG:-}
-      # Logs : date ISO-8601 dans ce fuseau, tag = chaîne (ou IPIXEL_LOG_TAG).
-      TZ: ${TZ:-Europe/Paris}
-      HOST_DBUS_SOCKET: /host/dbus/system_bus_socket
+      # Logs: local time in this time zone (empty = UTC). E.g. TZ=Europe/Paris.
+      TZ: ${TZ:-}

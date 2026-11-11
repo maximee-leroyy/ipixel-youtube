@@ -1,6 +1,5 @@
 """Unit tests for Studio subscriber parsing."""
 
-import errno
 from pathlib import Path
 
 from ipixel.youtube.cookies import (
@@ -182,24 +181,26 @@ def test_cookie_store_writes_set_cookie(tmp_path: Path) -> None:
     assert reloaded["__Secure-3PSIDTS"] == "rotated-token"
 
 
-def test_cookie_store_save_bind_mount_busy(tmp_path: Path, monkeypatch) -> None:
+def test_cookie_store_save_rewrites_in_place(tmp_path: Path) -> None:
+    # Same inode after save: required for a single-file bind mount (no rename onto the mountpoint).
     cookie_file = tmp_path / "cookies.txt"
     cookie_file.write_text(
         "# Netscape HTTP Cookie File\n.youtube.com	TRUE	/	TRUE	0	SAPISID	secret123\n",
         encoding="utf-8",
     )
-    store = CookieStore(str(cookie_file))
-    original_replace = Path.replace
-
-    def busy_replace(self: Path, target: Path | str) -> Path:
-        if self.name.endswith(".tmp"):
-            raise OSError(errno.EBUSY, "Device or resource busy")
-        return original_replace(self, target)
-
-    monkeypatch.setattr(Path, "replace", busy_replace)
-    store.save()
+    inode = cookie_file.stat().st_ino
+    CookieStore(str(cookie_file)).save()
+    assert cookie_file.stat().st_ino == inode
     assert "SAPISID" in cookie_file.read_text(encoding="utf-8")
-    assert not cookie_file.with_name("cookies.txt.tmp").exists()
+
+
+def test_cookie_store_reads_httponly_lines(tmp_path: Path) -> None:
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text(
+        "# Netscape HTTP Cookie File\n#HttpOnly_.google.com	TRUE	/	TRUE	0	SID	sidvalue\n",
+        encoding="utf-8",
+    )
+    assert CookieStore(str(cookie_file)).as_dict()["SID"] == "sidvalue"
 
 
 def test_netscape_cookies(tmp_path: Path) -> None:

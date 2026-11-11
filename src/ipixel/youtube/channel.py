@@ -6,7 +6,7 @@ import re
 import urllib.error
 
 from ipixel.constants import INNERTUBE_BROWSE, INNERTUBE_CONTEXT, INNERTUBE_RESOLVE
-from ipixel.debug import debug
+from ipixel.log import log
 from ipixel.youtube.http import http_get_text, http_post_json
 
 CHANNEL_ID_RE = re.compile(r"UC[\w-]{22}")
@@ -24,9 +24,9 @@ def _id_from_innertube(handle: str) -> str | None:
     data = http_post_json(INNERTUBE_RESOLVE, payload)
     browse_id = data.get("endpoint", {}).get("browseEndpoint", {}).get("browseId")
     if isinstance(browse_id, str) and is_channel_id(browse_id):
-        debug(f"resolve innertube {handle} -> {browse_id}")
+        log.debug(f"resolve innertube {handle} -> {browse_id}")
         return browse_id
-    debug(f"resolve innertube {handle}: browseId absent")
+    log.debug(f"resolve innertube {handle}: browseId absent")
     return None
 
 
@@ -41,15 +41,15 @@ def _id_from_channel_page(handle: str) -> str | None:
     ):
         match = re.search(pattern, html)
         if match:
-            debug(f"resolve page {handle} via {pattern} -> {match.group(1)}")
+            log.debug(f"resolve page {handle} via {pattern} -> {match.group(1)}")
             return match.group(1)
-    debug(f"resolve page {handle}: ID absent")
+    log.debug(f"resolve page {handle}: ID absent")
     return None
 
 
 def resolve_channel_id(channel: str) -> str:
     if is_channel_id(channel):
-        debug(f"resolve {channel}: déjà un ID")
+        log.debug(f"resolve {channel}: already an ID")
         return channel
 
     handle = channel if channel.startswith("@") else f"@{channel.lstrip('/')}"
@@ -67,11 +67,11 @@ def resolve_channel_id(channel: str) -> str:
         channel_id = _id_from_channel_page(handle)
         if channel_id:
             return channel_id
-        errors.append("page YouTube: ID absent")
+        errors.append("YouTube page: ID absent")
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
-        errors.append(f"page YouTube: {exc}")
+        errors.append(f"YouTube page: {exc}")
 
-    raise RuntimeError(f"Impossible de résoudre {channel!r} en ID de chaîne (UCxxxx). " + " | ".join(errors))
+    raise RuntimeError(f"Could not resolve {channel!r} to a channel ID (UCxxxx). " + " | ".join(errors))
 
 
 def fetch_channel_name(channel_id: str) -> str | None:
@@ -79,11 +79,11 @@ def fetch_channel_name(channel_id: str) -> str | None:
     data = http_post_json(INNERTUBE_BROWSE, payload)
     title = data.get("metadata", {}).get("channelMetadataRenderer", {}).get("title")
     if isinstance(title, str) and title.strip():
-        debug(f"channel name metadata: {title.strip()}")
+        log.debug(f"channel name metadata: {title.strip()}")
         return title.strip()
     page_title = data.get("header", {}).get("pageHeaderRenderer", {}).get("pageTitle")
     if isinstance(page_title, str) and page_title.strip():
-        debug(f"channel name header: {page_title.strip()}")
+        log.debug(f"channel name header: {page_title.strip()}")
         return page_title.strip()
-    debug(f"channel name absent for {channel_id}")
+    log.debug(f"channel name absent for {channel_id}")
     return None

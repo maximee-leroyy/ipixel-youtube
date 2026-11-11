@@ -11,7 +11,7 @@ from http.client import HTTPMessage, HTTPResponse
 from typing import IO
 
 from ipixel.constants import USER_AGENT
-from ipixel.debug import debug
+from ipixel.log import log
 from ipixel.youtube.cookies import CookieStore
 
 _STUDIO_HTML_OPENER: urllib.request.OpenerDirector | None = None
@@ -78,7 +78,7 @@ class _SkipGoogleLoginRedirects(urllib.request.HTTPRedirectHandler):
         newurl: str,
     ) -> urllib.request.Request | None:
         if _is_google_login_url(newurl):
-            debug(f"studio stop redirect {_redact_url(newurl)}")
+            log.debug(f"studio stop redirect {_redact_url(newurl)}")
             return None
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is None:
@@ -103,14 +103,14 @@ def _http_open(
     opener: urllib.request.OpenerDirector | None = None,
     cookie_store: CookieStore | None = None,
 ) -> HTTPResponse:
-    debug(f"{request.get_method()} {_redact_url(request.full_url)}")
+    log.debug(f"{request.get_method()} {_redact_url(request.full_url)}")
     try:
         if opener is None:
             response = urllib.request.urlopen(request, timeout=timeout)
         else:
             response = opener.open(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
-        debug(f"HTTP {exc.code} {_redact_url(exc.url or request.full_url)}")
+        log.debug(f"HTTP {exc.code} {_redact_url(exc.url or request.full_url)}")
         if cookie_store is not None:
             cookie_store.absorb(request, exc)
         raise
@@ -130,7 +130,7 @@ def http_get_text(
     with _http_open(request, timeout, opener, cookie_store) as response:
         body = response.read().decode("utf-8", errors="replace")
         final_url = response.url
-        debug(f"GET <- {response.status} {final_url} ({len(body)} bytes)")
+        log.debug(f"GET <- {response.status} {final_url} ({len(body)} bytes)")
         return body, final_url
 
 
@@ -143,7 +143,7 @@ def http_get_json(
     request = urllib.request.Request(url, headers=_merge_headers(headers))
     with _http_open(request, timeout, cookie_store=cookie_store) as response:
         raw = response.read().decode()
-        debug(f"GET <- {response.status} {_redact_url(response.url)} ({len(raw)} bytes)")
+        log.debug(f"GET <- {response.status} {_redact_url(response.url)} ({len(raw)} bytes)")
         return json.loads(raw)
 
 
@@ -165,7 +165,7 @@ def http_post_json(
         raw = response.read().decode()
         parsed = json.loads(raw)
         keys = list(parsed)[:8] if isinstance(parsed, dict) else type(parsed).__name__
-        debug(f"POST <- {response.status} {_redact_url(response.url)} ({len(raw)} bytes, keys={keys})")
+        log.debug(f"POST <- {response.status} {_redact_url(response.url)} ({len(raw)} bytes, keys={keys})")
         if not isinstance(parsed, dict):
-            raise TypeError(f"Réponse JSON inattendue: {type(parsed).__name__}")
+            raise TypeError(f"Unexpected JSON response: {type(parsed).__name__}")
         return parsed

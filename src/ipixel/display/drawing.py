@@ -26,7 +26,7 @@ def fit_to_panel(image: Image.Image, width: int, height: int) -> Image.Image:
 def load_drawing(path: str | Path, width: int = 32, height: int = 32) -> tuple[list[Image.Image], list[int]]:
     file = Path(path)
     if not file.is_file():
-        raise FileNotFoundError(f"Dessin introuvable: {file}")
+        raise FileNotFoundError(f"Drawing not found: {file}")
     frames: list[Image.Image] = []
     durations: list[int] = []
     with Image.open(file) as source:

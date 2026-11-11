@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import http.cookiejar
 import time
@@ -12,7 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from ipixel.constants import COOKIE_HELP, STUDIO_COOKIE_NAMES, STUDIO_ORIGIN
-from ipixel.debug import debug
+from ipixel.log import log
 
 _cookie_stores: dict[str, CookieStore] = {}
 
@@ -105,23 +104,18 @@ class CookieStore:
     def _load(self) -> None:
         path = Path(self.path)
         if not path.is_file():
-            raise RuntimeError(f"Fichier cookies introuvable: {self.path}\n\n{COOKIE_HELP}")
-        loaded = False
-        try:
-            self.jar.load(ignore_discard=True, ignore_expires=True)
-            loaded = True
-        except (OSError, http.cookiejar.LoadError, UnicodeError, ValueError):
-            debug("cookies mozilla load failed, fallback parser")
-        if not loaded or sum(1 for _ in self.jar) == 0:
-            self.jar.clear()
-            for cookie in _iter_netscape_cookies(self.path):
-                self.jar.set_cookie(cookie)
+            raise RuntimeError(f"Cookies file not found: {self.path}\n\n{COOKIE_HELP}")
+        # One parser: ours. MozillaCookieJar.load() skips "#HttpOnly_" lines, which hold
+        # most of the Google session cookies in browser exports.
+        self.jar.clear()
+        for cookie in _iter_netscape_cookies(self.path):
+            self.jar.set_cookie(cookie)
         if sum(1 for _ in self.jar) == 0:
-            raise RuntimeError(f"Aucun cookie YouTube/Google dans {self.path}.")
+            raise RuntimeError(f"No YouTube/Google cookies in {self.path}.")
         present = [
             cookie.name for cookie in self.jar if cookie.name in {"SAPISID", "__Secure-3PAPISID", "LOGIN_INFO", "SID"}
         ]
-        debug(f"cookies {self.path}: {sum(1 for _ in self.jar)} noms, auth={present or 'aucun'}")
+        log.debug(f"cookies {self.path}: {sum(1 for _ in self.jar)} names, auth={present or 'none'}")
         self._saved_mtime = path.stat().st_mtime
 
     def reload_if_externally_changed(self) -> None:
@@ -131,7 +125,7 @@ class CookieStore:
         mtime = path.stat().st_mtime
         if mtime <= self._saved_mtime:
             return
-        debug(f"cookies reload from disk {self.path}")
+        log.debug(f"cookies reload from disk {self.path}")
         self.jar.clear()
         self._load()
 
@@ -167,7 +161,7 @@ class CookieStore:
         try:
             self.jar.extract_cookies(cast(HTTPResponse, response), request)
         except (AttributeError, OSError, ValueError):
-            debug("cookies extract skipped")
+            log.debug("cookies extract skipped")
             return
         if self._fingerprint() == before:
             return
@@ -176,23 +170,14 @@ class CookieStore:
             for cookie in self.jar
             if before_names.get((cookie.domain, cookie.path, cookie.name)) != cookie.value
         ]
-        debug(f"cookies refresh {', '.join(changed) or 'unknown'} -> {self.path}")
+        log.debug(f"cookies refresh {', '.join(changed) or 'unknown'} -> {self.path}")
         self.save()
 
     def save(self) -> None:
-        path = Path(self.path)
-        tmp = path.with_name(path.name + ".tmp")
-        self.jar.save(filename=str(tmp), ignore_discard=True, ignore_expires=True)
-        try:
-            tmp.replace(path)
-        except OSError as exc:
-            # Bind-mount d'un fichier (Docker/nerdctl) : rename vers le mountpoint = EBUSY.
-            if exc.errno not in (errno.EBUSY, errno.EXDEV):
-                tmp.unlink(missing_ok=True)
-                raise
-            path.write_bytes(tmp.read_bytes())
-            tmp.unlink(missing_ok=True)
-        self._saved_mtime = path.stat().st_mtime
+        # Rewrite in place: the file is often a single-file bind mount (Docker/nerdctl),
+        # and renaming a temp file onto a mountpoint fails with EBUSY.
+        self.jar.save(filename=self.path, ignore_discard=True, ignore_expires=True)
+        self._saved_mtime = Path(self.path).stat().st_mtime
 
 
 def cookie_store(path: str) -> CookieStore:
@@ -215,9 +200,7 @@ def sapisid_from_cookies(cookies: dict[str, str]) -> str:
         value = cookies.get(name)
         if value:
             return value
-    raise RuntimeError(
-        "Cookie SAPISID absent. Réexporte les cookies depuis studio.youtube.com pendant que tu es connecté."
-    )
+    raise RuntimeError("SAPISID cookie missing. Re-export the cookies from studio.youtube.com while signed in.")
 
 
 def sapisid_hash(sapisid: str, origin: str = STUDIO_ORIGIN) -> str:
@@ -246,7 +229,7 @@ def studio_headers(
     auth_user: str = "0",
 ) -> dict[str, str]:
     token = sapisid_hash(sapisid_from_cookies(cookies), origin)
-    debug(f"studio headers origin={origin} auth_user={auth_user} sapisidhash_ts={token.split('_', 1)[0]}")
+    log.debug(f"studio headers origin={origin} auth_user={auth_user} sapisidhash_ts={token.split('_', 1)[0]}")
     return {
         "Authorization": f"SAPISIDHASH {token} SAPISID1PHASH {token} SAPISID3PHASH {token}",
         "Cookie": _cookie_header(cookies),

@@ -32,18 +32,18 @@ STUDIO_SUBSCRIBER_KEYS = {
     "subscribers",
 }
 COOKIE_HELP = """\
-Le chiffre exact (YouTube Studio → Abonnés actuels) n'est pas public.
-Il faut la session du propriétaire de la chaîne.
+The exact number (YouTube Studio → Current subscribers) is not public.
+You need the channel owner's session.
 
-1. Connecte-toi à https://studio.youtube.com avec le compte de la chaîne
-2. Exporte les cookies (extension Chrome « Get cookies.txt LOCALLY »)
-3. Enregistre le fichier cookies.txt à la racine du projet
-4. Relance : ipixel-youtube --cookies cookies.txt
+1. Sign in to https://studio.youtube.com with the channel's account
+2. Export the cookies (Chrome extension "Get cookies.txt LOCALLY")
+3. Save the cookies.txt file at the project root
+4. Run again: ipixel-youtube --cookies cookies.txt
 
-Le script réécrit ce fichier quand Google envoie de nouveaux cookies.
-Réexporte seulement après un logout, ou si le script dit que la session a expiré.
+The script rewrites this file when Google sends new cookies.
+Export again only after a logout, or if the script says the session expired.
 
-Sans cookies, tu peux encore afficher l'estimation publique :
+Without cookies, you can still show the public estimate:
   ipixel-youtube --source live
 """
 USER_AGENT = (
@@ -58,7 +58,7 @@ BRAND_YT_RED = (255, 0, 0)
 BRAND_CAPTION = (200, 200, 208)
 PixelColor = tuple[int, int, int]
 
-# 13 px: triangle play 1-3-4-3-1 + coins arrondis (RGBA + sobel=2).
+# 13 px: play triangle 1-3-4-3-1 + rounded corners (RGBA + sobel=2).
 YOUTUBE_LOGO_PYX_HEIGHT = 13
 SHEEN_FRAME_MS = 100
 SHEEN_FRAMES = 24

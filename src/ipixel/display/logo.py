@@ -88,15 +88,10 @@ def _crop_visible(image: Image.Image) -> Image.Image:
 
 
 def _open_logo_rgba() -> Image.Image:
-    try:
-        with brand_file("youtube.svg") as svg_path:
-            document = pymupdf.open(svg_path)
-            pixmap = document[0].get_pixmap(matrix=pymupdf.Matrix(24, 24), alpha=True)
-            return Image.open(BytesIO(pixmap.tobytes("png"))).convert("RGBA")
-    except FileNotFoundError:
-        pass
-    with brand_file("youtube.png") as png_path:
-        return Image.open(png_path).convert("RGBA")
+    with brand_file("youtube.svg") as svg_path:
+        document = pymupdf.open(svg_path)
+        pixmap = document[0].get_pixmap(matrix=pymupdf.Matrix(24, 24), alpha=True)
+        return Image.open(BytesIO(pixmap.tobytes("png"))).convert("RGBA")
 
 
 @lru_cache(maxsize=1)

@@ -174,8 +174,7 @@ def _glyph_gaps(text: str, gap: int, separator_gap: int | None) -> list[int]:
         return []
     tight = gap if separator_gap is None else separator_gap
     return [
-        tight if _is_separator(text[index]) or _is_separator(text[index + 1]) else gap
-        for index in range(len(text) - 1)
+        tight if _is_separator(text[index]) or _is_separator(text[index + 1]) else gap for index in range(len(text) - 1)
     ]
 
 

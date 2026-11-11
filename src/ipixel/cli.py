@@ -2,29 +2,38 @@
 
 from __future__ import annotations
 
+import functools
 import signal
 import time
 import urllib.error
+from collections.abc import Callable
 from pathlib import Path
 
 import click
-import pypixelcolor
 
 from ipixel.constants import BLE_ERRORS, COOKIE_HELP, DEFAULT_BRIGHTNESS
-from ipixel.debug import debug as log_debug
-from ipixel.debug import set_debug
-from ipixel.display.device import clamp_brightness, connect_device, disconnect_device, display_count, display_drawing
+from ipixel.display.device import (
+    Panel,
+    clamp_brightness,
+    connect_device,
+    disconnect_device,
+    display_count,
+    display_drawing,
+)
 from ipixel.display.drawing import load_drawing, write_drawing_preview
 from ipixel.display.render import write_preview
-from ipixel.log import log, set_tag
+from ipixel.log import log, set_tag, setup_logging, tag_for
 from ipixel.youtube.channel import fetch_channel_name, resolve_channel_id
 from ipixel.youtube.counts import fetch_count, format_count, format_panel_count
 from ipixel.youtube.http import http_error_detail
 
 
 def _exit_on_sigterm(signum: int, frame: object) -> None:
-    # docker stop envoie SIGTERM : sans ça Python meurt sans fermer le lien BLE,
-    # le panneau reste "connecté" dans BlueZ et n'est plus visible au redémarrage.
+    """Turn SIGTERM (`docker stop`) into a normal exit so `finally` closes the BLE link.
+
+    Python's default SIGTERM action kills the process without cleanup: the panel
+    then stays "connected" in the host's BlueZ and cannot be found on restart.
+    """
     raise SystemExit(0)
 
 
@@ -45,7 +54,7 @@ def _save_preview(
     log.info(f"{channel_name} {count_text}")
     log.info(f"Simu 32x32: {native_path}")
     log.info(f"Simu LED:   {led_path}")
-    log.info(f"Ouvre le GIF: {gif_path}")
+    log.info(f"Open the GIF: {gif_path}")
     return 0
 
 
@@ -64,33 +73,46 @@ def _run_drawing(
         try:
             native_path, led_path, gif_path = write_drawing_preview(image_path, preview_dir)
         except (OSError, ValueError) as exc:
-            log.error(f"Dessin illisible: {exc}")
+            log.error(f"Unreadable drawing: {exc}")
             return 2
-        log.info(f"Dessin: {image_path}")
+        log.info(f"Drawing: {image_path}")
         log.info(f"Simu 32x32: {native_path}")
         log.info(f"Simu LED:   {led_path}")
-        log.info(f"Ouvre le GIF: {gif_path}")
+        log.info(f"Open the GIF: {gif_path}")
         return 0
 
     try:
         load_drawing(image_path)
     except (OSError, ValueError) as exc:
-        log.error(f"Dessin illisible: {exc}")
+        log.error(f"Unreadable drawing: {exc}")
         return 2
 
-    device: pypixelcolor.Client | None = None
+    panel = Panel(address)
     try:
-        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness, attempts=3)
-        display_drawing(device, image_path, save_slot=save_slot, static=static)
+        connect_device(panel, wipe_slot=wipe_slot, brightness=brightness, attempts=3)
+        display_drawing(panel, image_path, save_slot=save_slot, static=static)
     except KeyboardInterrupt:
-        log.info("Arrêt.")
+        log.info("Stopped.")
     except BLE_ERRORS as exc:
         log.error(f"Bluetooth: {type(exc).__name__}: {exc}")
         return 1
     finally:
-        if device is not None:
-            disconnect_device(device)
+        disconnect_device(panel)
     return 0
+
+
+def _exit_with_status(func: Callable[..., int]) -> Callable[..., None]:
+    """Make the command's return value the process exit code.
+
+    In standalone mode click ignores a command's return value, so `return 1` would
+    exit with 0. ctx.exit() is click's way to set the code.
+    """
+
+    @functools.wraps(func)
+    def wrapper(**kwargs: object) -> None:
+        click.get_current_context().exit(func(**kwargs))
+
+    return wrapper
 
 
 @click.command(
@@ -102,14 +124,14 @@ def _run_drawing(
     envvar="IPIXEL_ADDRESS",
     default=None,
     show_envvar=True,
-    help="Adresse Bluetooth du panneau (MAC Linux ou UUID macOS). Obligatoire sauf --preview / --print-count.",
+    help="Bluetooth address of the panel (Linux MAC or macOS UUID). Required except with --preview / --print-count.",
 )
 @click.option(
     "--channel",
     envvar=["YOUTUBE_CHANNEL", "YOUTUBE_CHANNEL_ID"],
     default=None,
     show_envvar=True,
-    help="ID de chaîne (UCxxxx) ou handle (@maChaine).",
+    help="Channel ID (UCxxxx) or handle (@myChannel).",
 )
 @click.option(
     "--source",
@@ -117,34 +139,34 @@ def _run_drawing(
     type=click.Choice(["studio", "live", "official"], case_sensitive=True),
     default="studio",
     show_envvar=True,
-    help="studio = chiffre exact YouTube Studio (cookies du propriétaire). "
-    "live = estimation Mixerno/SocialCounts. "
-    "official = YouTube Data API arrondie (--api-key).",
+    help="studio = exact YouTube Studio number (owner's cookies). "
+    "live = Mixerno/SocialCounts estimate. "
+    "official = rounded YouTube Data API (--api-key).",
 )
 @click.option(
     "--cookies",
     envvar="YOUTUBE_COOKIES",
     default="cookies.txt",
     show_envvar=True,
-    help="Fichier cookies Netscape (session YouTube Studio).",
+    help="Netscape cookies file (YouTube Studio session).",
 )
 @click.option(
     "--api-key",
     envvar="YOUTUBE_API_KEY",
     default=None,
     show_envvar=True,
-    help="Clé API YouTube Data v3, seulement pour --source official.",
+    help="YouTube Data v3 API key, only for --source official.",
 )
 @click.option(
     "--interval",
     type=int,
     default=15,
-    help="Secondes entre deux requêtes.",
+    help="Seconds between two requests.",
 )
 @click.option(
     "--color",
     default=None,
-    help="Override couleur accent hex. Défaut: cyan.",
+    help="Accent color override (hex). Default: cyan.",
 )
 @click.option(
     "--brightness",
@@ -153,81 +175,83 @@ def _run_drawing(
     envvar="IPIXEL_BRIGHTNESS",
     default=DEFAULT_BRIGHTNESS,
     show_envvar=True,
-    help="Luminosité du panneau 0-100 (réglage matériel, ignoré par --preview).",
+    help="Panel brightness 0-100 (hardware setting, ignored by --preview).",
 )
 @click.option(
     "--font",
     default="CUSONG",
-    help="Police: CUSONG, SIMSUN ou VCR_OSD_MONO (plus lisible en 32x32).",
+    help="Font: CUSONG, SIMSUN or VCR_OSD_MONO (more readable at 32x32).",
 )
 @click.option(
     "--name",
     envvar="YOUTUBE_CHANNEL_NAME",
     default=None,
     show_envvar=True,
-    help="Nom affiché en haut du panneau. Par défaut: le vrai nom YouTube.",
+    help="Name shown at the top of the panel. Default: the real YouTube name.",
 )
 @click.option(
     "--save-slot",
     type=int,
     default=0,
-    help="Slot 1-10 pour sauver en ROM. 0 = affichage live, pas de ROM. "
-    "La doc pypixelcolor: un slot avec data corrompue peut brick/bootloop. "
-    "N'utilise un slot qu'après un envoi OK sans slot.",
+    help="Slot 1-10 to save to ROM. 0 = live display, no ROM. Requires --static "
+    "(a GIF in ROM can brick the panel). "
+    "pypixelcolor docs: a slot with corrupted data can brick/bootloop. "
+    "Only use a slot after a successful send without a slot.",
 )
 @click.option(
     "--wipe-slot",
     type=int,
     metavar="N",
     default=1,
-    help="Efface ce slot à la connexion (là où le GIF cassé a été sauvé). 0 = ne rien effacer.",
+    help="Erase this slot on connect (where the broken GIF was saved). 0 = erase nothing.",
 )
 @click.option(
     "--static",
     is_flag=True,
-    help="PNG fixe, sans animation. Défaut: GIF court (reflet) en live, sans slot ROM.",
+    help="Still PNG, no animation. Default: short GIF (sheen) live, no ROM slot.",
 )
 @click.option(
     "--image",
     "image_path",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
     default=None,
-    help="PNG/GIF/JPEG à afficher à la place du HUD YouTube. Redimensionné en 32×32.",
+    help="PNG/GIF/JPEG to show instead of the YouTube HUD. Resized to 32×32.",
 )
 @click.option(
     "--preview",
     is_flag=True,
-    help="Génère une simu LED dans assets/preview/ sans Bluetooth. "
-    "Avec --image: simule le dessin. Sinon: utilise le compteur de --channel/--source, "
-    "sauf si --preview-count est fourni.",
+    help="Generate an LED simulation in assets/preview/ without Bluetooth. "
+    "With --image: simulates the drawing. Otherwise: uses the count from --channel/--source, "
+    "unless --preview-count is given.",
 )
 @click.option(
     "--preview-dir",
     default=None,
-    help="Dossier des PNG/GIF de preview (défaut: assets/preview).",
+    help="Folder for preview PNG/GIF files (default: assets/preview).",
 )
 @click.option(
     "--preview-count",
     default=None,
-    help="Force un nombre en --preview au lieu de récupérer le vrai compteur.",
+    help="Force a number in --preview instead of fetching the real count.",
 )
 @click.option(
     "--once",
     is_flag=True,
-    help="Affiche une seule fois puis quitte (le texte reste si --save-slot >= 1).",
+    help="Display once then exit (the text stays if --save-slot >= 1).",
 )
 @click.option(
     "--print-count",
     is_flag=True,
-    help="Affiche le nombre d'abonnés dans le terminal, sans Bluetooth.",
+    help="Print the subscriber count in the terminal, without Bluetooth.",
 )
 @click.option(
     "--debug",
     is_flag=True,
     envvar="YOUTUBE_DEBUG",
     show_envvar=True,
-    help="Logs détaillés sur stderr (HTTP, session Studio, extraction).",
+    help="Detailed logs on stderr (HTTP, Studio session, BLE, pypixelcolor, bleak).",
 )
+@_exit_with_status
 def main(
     address: str | None,
     channel: str | None,
@@ -250,11 +274,11 @@ def main(
     print_count: bool,
     debug: bool,
 ) -> int:
-    """Affiche le nombre d'abonnés YouTube en live sur un iPixel Color."""
-    set_debug(debug)
+    """Show the live YouTube subscriber count on an iPixel Color."""
+    setup_logging(debug)
+    set_tag(tag_for(channel, address))
     signal.signal(signal.SIGTERM, _exit_on_sigterm)
-    set_tag(channel or address or "")
-    log_debug(
+    log.debug(
         f"start source={source} channel={channel} cookies={cookies} "
         f"image={image_path} print_count={print_count} once={once} brightness={brightness}"
     )
@@ -264,10 +288,13 @@ def main(
     except ValueError as exc:
         log.error(exc)
         return 2
+    if save_slot >= 1 and not static:
+        log.error("--save-slot requires --static: a GIF in ROM can brick the panel.")
+        return 2
 
     if image_path:
         if not preview and not address:
-            log.error("Paramètres manquants: --address ou IPIXEL_ADDRESS")
+            log.error("Missing parameters: --address or IPIXEL_ADDRESS")
             return 2
         return _run_drawing(
             image_path,
@@ -283,31 +310,29 @@ def main(
     forced_count: str | None = None
     if preview_count is not None:
         forced_count = format_panel_count(int(preview_count)) if preview_count.isdigit() else preview_count
-    elif preview and source == "studio" and not Path(cookies).is_file():
-        return _save_preview(name or "CHANNEL", format_count(1093), font, color, preview_dir)
 
     missing = []
     if not channel:
-        missing.append("--channel ou YOUTUBE_CHANNEL")
-    if source == "official" and api_key is None:
-        missing.append("--api-key ou YOUTUBE_API_KEY")
-    if source == "studio" and not Path(cookies).is_file():
-        missing.append(f"--cookies ({cookies} introuvable)")
+        missing.append("--channel or YOUTUBE_CHANNEL")
+    if forced_count is None and source == "official" and api_key is None:
+        missing.append("--api-key or YOUTUBE_API_KEY")
+    if forced_count is None and source == "studio" and not Path(cookies).is_file():
+        missing.append(f"--cookies ({cookies} not found)")
     if not preview and not print_count and not address:
-        missing.append("--address ou IPIXEL_ADDRESS")
+        missing.append("--address or IPIXEL_ADDRESS")
     if missing:
-        log.error("Paramètres manquants: " + ", ".join(missing))
+        log.error("Missing parameters: " + ", ".join(missing))
         if source == "studio":
             log.error(COOKIE_HELP)
         else:
-            log.error("Exemple: ipixel-youtube --channel @taChaine")
+            log.error("Example: ipixel-youtube --channel @yourChannel")
         return 2
 
     assert channel is not None
     try:
         channel_id = resolve_channel_id(channel)
     except (urllib.error.URLError, RuntimeError) as exc:
-        log.error(f"Impossible de résoudre la chaîne: {exc}")
+        log.error(f"Cannot resolve the channel: {exc}")
         return 1
 
     channel_name = name
@@ -315,15 +340,17 @@ def main(
         try:
             channel_name = fetch_channel_name(channel_id)
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as exc:
-            log.warning(f"Nom de chaîne indisponible ({exc}), fallback handle.")
+            log.error(f"Channel name unavailable: {exc}. Retry or pass --name.")
+            return 1
     if not channel_name:
-        channel_name = channel.lstrip("@")
+        log.error(f"YouTube returns no name for {channel_id}. Pass --name.")
+        return 1
 
-    log.info(f"Chaîne: {channel_name} ({channel_id})")
+    log.info(f"Channel: {channel_name} ({channel_id})")
     if source == "studio":
         log.info(f"Source: YouTube Studio (cookies {cookies})")
     elif source == "live":
-        log.info("Source: estimation publique (pas le chiffre Studio).")
+        log.info("Source: public estimate (not the Studio number).")
 
     if preview and forced_count is not None:
         return _save_preview(channel_name, forced_count, font, color, preview_dir)
@@ -338,10 +365,10 @@ def main(
                 cookies_path=cookies,
             )
         except urllib.error.HTTPError as exc:
-            log.error(f"Erreur HTTP {http_error_detail(exc)}")
+            log.error(f"HTTP error {http_error_detail(exc)}")
             return 1
         except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
-            log.error(f"Erreur: {exc}")
+            log.error(f"Error: {exc}")
             return 1
         exact = format_count(count)
         panel = format_panel_count(count)
@@ -353,14 +380,15 @@ def main(
             return _save_preview(channel_name, panel, font, color, preview_dir)
 
     assert address is not None
-    device: pypixelcolor.Client | None = None
+    panel = Panel(address)
     last_count: int | None = None
     last_error: str | None = None
     min_interval = 15 if source == "studio" else 5 if source == "live" else 10
+    # Daemon mode retries the BLE connection forever; one-shot runs give up after 3 tries.
     attempts = 3 if once else None
 
     try:
-        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness, attempts=attempts)
+        connect_device(panel, wipe_slot=wipe_slot, brightness=brightness, attempts=attempts)
 
         while True:
             try:
@@ -372,27 +400,26 @@ def main(
                     cookies_path=cookies,
                 )
             except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
-                if isinstance(exc, urllib.error.HTTPError):
-                    detail = f"Erreur HTTP {http_error_detail(exc)}"
-                else:
-                    detail = f"Erreur: {exc}"
-                if last_count is not None:
-                    message = f"Compteur indisponible ({detail}), on garde {last_count}"
-                else:
-                    message = detail
+                # The panel keeps showing the last image it received; we only report, once per distinct error.
+                message = (
+                    f"HTTP error {http_error_detail(exc)}"
+                    if isinstance(exc, urllib.error.HTTPError)
+                    else f"Error: {exc}"
+                )
                 if message != last_error:
-                    log.warning(message)
+                    log.error(message)
                     last_error = message
             else:
                 last_error = None
-                if count != last_count:
-                    count_text = format_panel_count(count)
+                if count == last_count:
+                    log.info(f"unchanged ({count})")
+                else:
                     log.info(f"{channel_name} {format_count(count)}")
                     try:
                         display_count(
-                            device,
+                            panel,
                             channel_name,
-                            count_text,
+                            format_panel_count(count),
                             color=color,
                             font=font,
                             save_slot=save_slot,
@@ -400,25 +427,21 @@ def main(
                         )
                         last_count = count
                     except BLE_ERRORS as exc:
-                        # last_count inchangé : l'affichage sera retenté au prochain tour.
-                        log.warning(f"Bluetooth perdu ({type(exc).__name__}: {exc}), reconnexion...")
-                        disconnect_device(device)
-                        device = None
-                        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness, attempts=attempts)
+                        # last_count is left unchanged, so the next loop sends the count again.
+                        log.warning(f"Bluetooth lost ({type(exc).__name__}: {exc}), reconnecting...")
+                        disconnect_device(panel)
+                        connect_device(panel, wipe_slot=wipe_slot, brightness=brightness, attempts=attempts)
                         continue
-                else:
-                    log.info(f"inchangé ({count})")
 
             if once:
                 break
             time.sleep(max(interval, min_interval))
 
     except KeyboardInterrupt:
-        log.info("Arrêt.")
+        log.info("Stopped.")
     except BLE_ERRORS as exc:
         log.error(f"Bluetooth: {type(exc).__name__}: {exc}")
         return 1
     finally:
-        if device is not None:
-            disconnect_device(device)
+        disconnect_device(panel)
     return 0

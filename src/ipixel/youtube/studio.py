@@ -20,7 +20,7 @@ from ipixel.constants import (
     USER_AGENT,
     WEB_CREATOR_CLIENT_NAME,
 )
-from ipixel.debug import debug
+from ipixel.log import log
 from ipixel.youtube.cookies import CookieStore, cookie_store, studio_headers
 from ipixel.youtube.http import (
     _http_error_is_login,
@@ -241,14 +241,14 @@ def _probe_studio_session(session: StudioSession) -> bool:
             cookie_store=session.store,
         )
     except urllib.error.HTTPError as exc:
-        debug(f"studio probe auth_user={session.auth_user} HTTP {exc.code}")
+        log.debug(f"studio probe auth_user={session.auth_user} HTTP {exc.code}")
         try:
             exc.read()
         except OSError:
             pass
         return False
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, TypeError) as exc:
-        debug(f"studio probe auth_user={session.auth_user}: {exc}")
+        log.debug(f"studio probe auth_user={session.auth_user}: {exc}")
         return False
     if isinstance(data.get("error"), dict):
         return False
@@ -271,7 +271,7 @@ def _api_only_studio_session(
             loaded_at=time.time(),
         )
         if _probe_studio_session(session):
-            debug(f"studio API-only session auth_user={auth_user}")
+            log.debug(f"studio API-only session auth_user={auth_user}")
             return session
     return None
 
@@ -284,12 +284,12 @@ def load_studio_session(
 ) -> StudioSession:
     path = Path(cookies_path)
     if not path.is_file():
-        raise RuntimeError(f"Fichier cookies introuvable: {cookies_path}\n\n{COOKIE_HELP}")
+        raise RuntimeError(f"Cookies file not found: {cookies_path}\n\n{COOKIE_HELP}")
 
     store = cookie_store(cookies_path)
     cached = _studio_sessions.get(cookies_path)
     if cached is not None and not force and (time.time() - cached.loaded_at) < STUDIO_SESSION_TTL_S:
-        debug(f"studio session cache age={int(time.time() - cached.loaded_at)}s")
+        log.debug(f"studio session cache age={int(time.time() - cached.loaded_at)}s")
         return cached
 
     html = ""
@@ -304,14 +304,11 @@ def load_studio_session(
     except urllib.error.HTTPError as exc:
         login = _http_error_is_login(exc)
         detail = http_error_detail(exc)
-        debug(f"studio HTML {detail} login={login}")
-        if cached is not None:
-            debug("studio HTML failed, reuse session cache")
-            return cached
+        log.debug(f"studio HTML {detail} login={login}")
         html = ""
 
     logged_in = bool(html) and studio_session_ok(html, final_url)
-    debug(
+    log.debug(
         f"studio session url={final_url} html={len(html)} bytes "
         f"logged_in={logged_in} channel={_ytcfg_field(html, 'CHANNEL_ID') if html else None} "
         f"service_login_in_html={'ServiceLogin' in html}"
@@ -321,10 +318,10 @@ def load_studio_session(
         context, query_id, api_key = _studio_context(html, channel_id)
         client = context.get("client")
         client_version = client.get("clientVersion") if isinstance(client, dict) else None
-        debug(
+        log.debug(
             f"studio ytcfg query_id={query_id} session_index={auth_user} "
-            f"api_key={'oui' if api_key else 'non'} client={client_version} "
-            f"delegated={'oui' if _ytcfg_field(html, 'DELEGATED_SESSION_ID') else 'non'}"
+            f"api_key={'yes' if api_key else 'no'} client={client_version} "
+            f"delegated={'yes' if _ytcfg_field(html, 'DELEGATED_SESSION_ID') else 'no'}"
         )
         session = StudioSession(
             store=store,
@@ -342,9 +339,7 @@ def load_studio_session(
     if api_session is not None:
         _studio_sessions[cookies_path] = api_session
         return api_session
-    if cached is not None:
-        return cached
-    raise RuntimeError("Session YouTube Studio expirée ou cookies invalides.\n\n" + COOKIE_HELP)
+    raise RuntimeError("YouTube Studio session expired or cookies invalid.\n\n" + COOKIE_HELP)
 
 
 def _studio_count_from_apis(session: StudioSession, errors: list[str]) -> int | None:
@@ -367,21 +362,21 @@ def _studio_count_from_apis(session: StudioSession, errors: list[str]) -> int | 
             cookie_store=session.store,
         )
         count = extract_lifetime_subscribers(data)
-        debug(
+        log.debug(
             f"analytics lifetime_subs={count} "
             f"looks_rounded={looks_publicly_rounded(count) if count is not None else None}"
         )
         # lifetimeSubsData is the Studio owner metric. 1100 can be the real count.
         if count is not None:
-            debug(f"count source=analytics value={count}")
+            log.debug(f"count source=analytics value={count}")
             return count
-        errors.append("analytics: Abonnés actuels absent")
+        errors.append("analytics: Current subscribers missing")
     except urllib.error.HTTPError as exc:
         detail = http_error_detail(exc)
-        debug(f"analytics HTTP {detail}")
+        log.debug(f"analytics HTTP {detail}")
         errors.append(f"analytics HTTP {detail}")
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, TypeError) as exc:
-        debug(f"analytics: {exc}")
+        log.debug(f"analytics: {exc}")
         errors.append(f"analytics: {exc}")
 
     for endpoint, payload in (
@@ -400,20 +395,20 @@ def _studio_count_from_apis(session: StudioSession, errors: list[str]) -> int | 
             )
         except urllib.error.HTTPError as exc:
             detail = http_error_detail(exc)
-            debug(f"{name} HTTP {detail}")
+            log.debug(f"{name} HTTP {detail}")
             errors.append(f"{name} HTTP {detail}")
             continue
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, TypeError) as exc:
-            debug(f"{name}: {exc}")
+            log.debug(f"{name}: {exc}")
             errors.append(f"{name}: {exc}")
             continue
         count = extract_studio_subscriber_count(data, query_id)
-        debug(
+        log.debug(
             f"{name} subscriberCount={count} "
             f"looks_rounded={looks_publicly_rounded(count) if count is not None else None}"
         )
         if count is not None:
-            debug(f"count source={name} value={count}")
+            log.debug(f"count source={name} value={count}")
             return count
         errors.append(f"{name}: subscriberCount absent")
     return None
@@ -428,7 +423,7 @@ def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
 
     http_fail = any("HTTP 401" in err or "HTTP 403" in err for err in errors)
     if http_fail:
-        debug("studio APIs HTTP error, refresh session")
+        log.debug("studio APIs HTTP error, refresh session")
         session = load_studio_session(channel_id, cookies_path, force=True)
         errors = []
         count = _studio_count_from_apis(session, errors)
@@ -439,16 +434,16 @@ def fetch_studio_count(channel_id: str, cookies_path: str) -> int:
         _extract_embedded_json(session.html),
         session.query_id,
     )
-    debug(
+    log.debug(
         f"html embedded subscriberCount={embedded} "
         f"rounded={looks_publicly_rounded(embedded) if embedded is not None else None}"
     )
     if embedded is not None and not looks_publicly_rounded(embedded):
-        debug(f"count source=html value={embedded}")
+        log.debug(f"count source=html value={embedded}")
         return embedded
 
-    debug(f"studio échec: {' | '.join(errors)}")
-    raise RuntimeError("Impossible de lire le nombre exact depuis YouTube Studio. " + " | ".join(errors))
+    log.debug(f"studio failed: {' | '.join(errors)}")
+    raise RuntimeError("Could not read the exact count from YouTube Studio. " + " | ".join(errors))
 
 
 def _extract_embedded_json(html: str) -> dict[str, object]:
