@@ -16,12 +16,20 @@ needs_bluetooth() {
   return 0
 }
 
+# Même format que ipixel.log : date ISO-8601 ms + fuseau, niveau, tag.
+log() {
+  _lvl="$1"
+  shift
+  printf '%s %-7s [%s] %s\n' "$(date +%Y-%m-%dT%H:%M:%S.%3N%:z)" "$_lvl" \
+    "${IPIXEL_LOG_TAG:-${YOUTUBE_CHANNEL:-${IPIXEL_ADDRESS:-ipixel}}}" "$*" >&2
+}
+
 no_ble_msg() {
-  echo "Bluetooth indisponible : pas d'interface HCI Linux dans ce container." >&2
-  echo "nerdctl sur Mac = VM sans puce BLE. Scan et panneau : Raspberry Pi 5." >&2
-  echo "  sudo systemctl enable --now bluetooth" >&2
-  echo "  nerdctl compose run --rm ipixel scan" >&2
-  echo "Sur Mac sans BLE : nerdctl compose run --rm ipixel --print-count" >&2
+  log ERROR "Bluetooth indisponible : pas d'interface HCI Linux dans ce container."
+  log ERROR "nerdctl sur Mac = VM sans puce BLE. Scan et panneau : Raspberry Pi 5."
+  log ERROR "  sudo systemctl enable --now bluetooth"
+  log ERROR "  nerdctl compose run --rm ipixel scan"
+  log ERROR "Sur Mac sans BLE : nerdctl compose run --rm ipixel --print-count"
 }
 
 bluez_ok() {
@@ -35,8 +43,10 @@ bluez_ok() {
 setup_bluez() {
   if bluez_ok "$HOST_DBUS"; then
     export DBUS_SYSTEM_BUS_ADDRESS="unix:path=${HOST_DBUS}"
+    log INFO "BlueZ de l'hôte via ${HOST_DBUS}"
     return 0
   fi
+  log INFO "Pas de BlueZ hôte, démarrage d'un bluetoothd local"
 
   if [ ! -s /etc/machine-id ]; then
     dbus-uuidgen >/etc/machine-id

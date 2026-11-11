@@ -3,6 +3,10 @@
 #   nerdctl compose up -d
 #
 # Build local : nerdctl compose build
+#
+# Plusieurs panneaux : un service par panneau (IPIXEL_ADDRESS différent), tous en
+# network_mode: host. Les connexions BLE sont sérialisées entre containers et la
+# connexion BlueZ laissée par un container tué est fermée au démarrage suivant.
 
 name: ipixel
 
@@ -29,4 +33,6 @@ services:
       YOUTUBE_SOURCE: ${YOUTUBE_SOURCE:-studio}
       YOUTUBE_COOKIES: /app/cookies.txt
       YOUTUBE_DEBUG: ${YOUTUBE_DEBUG:-}
+      # Logs : date ISO-8601 dans ce fuseau, tag = chaîne (ou IPIXEL_LOG_TAG).
+      TZ: ${TZ:-Europe/Paris}
       HOST_DBUS_SOCKET: /host/dbus/system_bus_socket

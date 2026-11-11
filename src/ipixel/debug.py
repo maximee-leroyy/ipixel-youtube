@@ -1,17 +1,13 @@
-"""Optional stderr tracing for HTTP / Studio session work."""
+"""Debug tracing for HTTP / Studio session work, routed through the unified logger."""
 
 from __future__ import annotations
 
-import sys
-
-DEBUG = False
+from ipixel.log import log, setup_logging
 
 
 def set_debug(enabled: bool) -> None:
-    global DEBUG
-    DEBUG = enabled
+    setup_logging(enabled)
 
 
 def debug(message: str) -> None:
-    if DEBUG:
-        print(f"debug: {message}", file=sys.stderr)
+    log.debug(message)

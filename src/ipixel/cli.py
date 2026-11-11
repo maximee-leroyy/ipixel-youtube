@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+import signal
 import time
 import urllib.error
 from pathlib import Path
@@ -16,9 +16,16 @@ from ipixel.debug import set_debug
 from ipixel.display.device import clamp_brightness, connect_device, disconnect_device, display_count, display_drawing
 from ipixel.display.drawing import load_drawing, write_drawing_preview
 from ipixel.display.render import write_preview
+from ipixel.log import log, set_tag
 from ipixel.youtube.channel import fetch_channel_name, resolve_channel_id
 from ipixel.youtube.counts import fetch_count, format_count, format_panel_count
 from ipixel.youtube.http import http_error_detail
+
+
+def _exit_on_sigterm(signum: int, frame: object) -> None:
+    # docker stop envoie SIGTERM : sans ça Python meurt sans fermer le lien BLE,
+    # le panneau reste "connecté" dans BlueZ et n'est plus visible au redémarrage.
+    raise SystemExit(0)
 
 
 def _save_preview(
@@ -35,10 +42,10 @@ def _save_preview(
         color,
         preview_dir,
     )
-    print(f"{channel_name} {count_text}")
-    print(f"Simu 32x32: {native_path}")
-    print(f"Simu LED:   {led_path}")
-    print(f"Ouvre le GIF: {gif_path}")
+    log.info(f"{channel_name} {count_text}")
+    log.info(f"Simu 32x32: {native_path}")
+    log.info(f"Simu LED:   {led_path}")
+    log.info(f"Ouvre le GIF: {gif_path}")
     return 0
 
 
@@ -57,28 +64,28 @@ def _run_drawing(
         try:
             native_path, led_path, gif_path = write_drawing_preview(image_path, preview_dir)
         except (OSError, ValueError) as exc:
-            print(f"Dessin illisible: {exc}", file=sys.stderr)
+            log.error(f"Dessin illisible: {exc}")
             return 2
-        print(f"Dessin: {image_path}")
-        print(f"Simu 32x32: {native_path}")
-        print(f"Simu LED:   {led_path}")
-        print(f"Ouvre le GIF: {gif_path}")
+        log.info(f"Dessin: {image_path}")
+        log.info(f"Simu 32x32: {native_path}")
+        log.info(f"Simu LED:   {led_path}")
+        log.info(f"Ouvre le GIF: {gif_path}")
         return 0
 
     try:
         load_drawing(image_path)
     except (OSError, ValueError) as exc:
-        print(f"Dessin illisible: {exc}", file=sys.stderr)
+        log.error(f"Dessin illisible: {exc}")
         return 2
 
     device: pypixelcolor.Client | None = None
     try:
-        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness)
+        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness, attempts=3)
         display_drawing(device, image_path, save_slot=save_slot, static=static)
     except KeyboardInterrupt:
-        print("\nArrêt.")
+        log.info("Arrêt.")
     except BLE_ERRORS as exc:
-        print(f"Bluetooth: {exc}", file=sys.stderr)
+        log.error(f"Bluetooth: {type(exc).__name__}: {exc}")
         return 1
     finally:
         if device is not None:
@@ -245,6 +252,8 @@ def main(
 ) -> int:
     """Affiche le nombre d'abonnés YouTube en live sur un iPixel Color."""
     set_debug(debug)
+    signal.signal(signal.SIGTERM, _exit_on_sigterm)
+    set_tag(channel or address or "")
     log_debug(
         f"start source={source} channel={channel} cookies={cookies} "
         f"image={image_path} print_count={print_count} once={once} brightness={brightness}"
@@ -253,12 +262,12 @@ def main(
     try:
         brightness = clamp_brightness(brightness)
     except ValueError as exc:
-        print(exc, file=sys.stderr)
+        log.error(exc)
         return 2
 
     if image_path:
         if not preview and not address:
-            print("Paramètres manquants: --address ou IPIXEL_ADDRESS", file=sys.stderr)
+            log.error("Paramètres manquants: --address ou IPIXEL_ADDRESS")
             return 2
         return _run_drawing(
             image_path,
@@ -287,21 +296,18 @@ def main(
     if not preview and not print_count and not address:
         missing.append("--address ou IPIXEL_ADDRESS")
     if missing:
-        print("Paramètres manquants: " + ", ".join(missing), file=sys.stderr)
+        log.error("Paramètres manquants: " + ", ".join(missing))
         if source == "studio":
-            print("\n" + COOKIE_HELP, file=sys.stderr)
+            log.error(COOKIE_HELP)
         else:
-            print(
-                "\nExemple:\n  ipixel-youtube --channel @taChaine",
-                file=sys.stderr,
-            )
+            log.error("Exemple: ipixel-youtube --channel @taChaine")
         return 2
 
     assert channel is not None
     try:
         channel_id = resolve_channel_id(channel)
     except (urllib.error.URLError, RuntimeError) as exc:
-        print(f"Impossible de résoudre la chaîne: {exc}", file=sys.stderr)
+        log.error(f"Impossible de résoudre la chaîne: {exc}")
         return 1
 
     channel_name = name
@@ -309,15 +315,15 @@ def main(
         try:
             channel_name = fetch_channel_name(channel_id)
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as exc:
-            print(f"Nom de chaîne indisponible ({exc}), fallback handle.", file=sys.stderr)
+            log.warning(f"Nom de chaîne indisponible ({exc}), fallback handle.")
     if not channel_name:
         channel_name = channel.lstrip("@")
 
-    print(f"Chaîne: {channel_name} ({channel_id})")
+    log.info(f"Chaîne: {channel_name} ({channel_id})")
     if source == "studio":
-        print(f"Source: YouTube Studio (cookies {cookies})")
+        log.info(f"Source: YouTube Studio (cookies {cookies})")
     elif source == "live":
-        print("Source: estimation publique (pas le chiffre Studio).")
+        log.info("Source: estimation publique (pas le chiffre Studio).")
 
     if preview and forced_count is not None:
         return _save_preview(channel_name, forced_count, font, color, preview_dir)
@@ -332,10 +338,10 @@ def main(
                 cookies_path=cookies,
             )
         except urllib.error.HTTPError as exc:
-            print(f"Erreur HTTP {http_error_detail(exc)}", file=sys.stderr)
+            log.error(f"Erreur HTTP {http_error_detail(exc)}")
             return 1
         except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
-            print(f"Erreur: {exc}", file=sys.stderr)
+            log.error(f"Erreur: {exc}")
             return 1
         exact = format_count(count)
         panel = format_panel_count(count)
@@ -351,9 +357,10 @@ def main(
     last_count: int | None = None
     last_error: str | None = None
     min_interval = 15 if source == "studio" else 5 if source == "live" else 10
+    attempts = 3 if once else None
 
     try:
-        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness)
+        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness, attempts=attempts)
 
         while True:
             try:
@@ -364,31 +371,23 @@ def main(
                     api_key=api_key,
                     cookies_path=cookies,
                 )
-            except urllib.error.HTTPError as exc:
-                if last_count is not None:
-                    message = f"Studio indisponible, on garde {last_count}"
-                    shown = f"{time.strftime('%H:%M:%S')}  {message}"
-                else:
-                    message = f"Erreur HTTP {http_error_detail(exc)}"
-                    shown = message
-                if message != last_error:
-                    print(shown, file=sys.stderr)
-                    last_error = message
             except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
-                if last_count is not None:
-                    message = f"Studio indisponible, on garde {last_count}"
-                    shown = f"{time.strftime('%H:%M:%S')}  {message}"
+                if isinstance(exc, urllib.error.HTTPError):
+                    detail = f"Erreur HTTP {http_error_detail(exc)}"
                 else:
-                    message = f"Erreur: {exc}"
-                    shown = message
+                    detail = f"Erreur: {exc}"
+                if last_count is not None:
+                    message = f"Compteur indisponible ({detail}), on garde {last_count}"
+                else:
+                    message = detail
                 if message != last_error:
-                    print(shown, file=sys.stderr)
+                    log.warning(message)
                     last_error = message
             else:
                 last_error = None
                 if count != last_count:
                     count_text = format_panel_count(count)
-                    print(f"{time.strftime('%H:%M:%S')}  {channel_name} {format_count(count)}")
+                    log.info(f"{channel_name} {format_count(count)}")
                     try:
                         display_count(
                             device,
@@ -399,29 +398,26 @@ def main(
                             save_slot=save_slot,
                             animate=not static,
                         )
+                        last_count = count
                     except BLE_ERRORS as exc:
-                        print(f"Bluetooth perdu ({exc}), reconnexion...", file=sys.stderr)
+                        # last_count inchangé : l'affichage sera retenté au prochain tour.
+                        log.warning(f"Bluetooth perdu ({type(exc).__name__}: {exc}), reconnexion...")
                         disconnect_device(device)
-                        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness)
-                        display_count(
-                            device,
-                            channel_name,
-                            count_text,
-                            color=color,
-                            font=font,
-                            save_slot=save_slot,
-                            animate=not static,
-                        )
-                    last_count = count
+                        device = None
+                        device = connect_device(address, wipe_slot=wipe_slot, brightness=brightness, attempts=attempts)
+                        continue
                 else:
-                    print(f"{time.strftime('%H:%M:%S')}  inchangé ({count})")
+                    log.info(f"inchangé ({count})")
 
             if once:
                 break
             time.sleep(max(interval, min_interval))
 
     except KeyboardInterrupt:
-        print("\nArrêt.")
+        log.info("Arrêt.")
+    except BLE_ERRORS as exc:
+        log.error(f"Bluetooth: {type(exc).__name__}: {exc}")
+        return 1
     finally:
         if device is not None:
             disconnect_device(device)

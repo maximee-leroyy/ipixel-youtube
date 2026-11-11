@@ -39,6 +39,7 @@ RUN apt-get update \
         dbus \
         bluez \
         rfkill \
+        tzdata \
     && rm -f /usr/share/dbus-1/system-services/org.bluez.service \
              /etc/dbus-1/system-services/org.bluez.service \
     && rm -rf /var/lib/apt/lists/*
